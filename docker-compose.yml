@@ -154,50 +154,139 @@ services:
     - sh
     - -c
     - |
+      # Exit immediately if any command fails
       set -e
-      bin/yugabyted start --background=false --cloud_location=cloud.region.zone1 &
+
+      # Start YugabyteDB in the background.
+      # --background=false keeps logs attached to the container
+      # --base_dir ensures DB data is stored in the mounted Docker volume
+      bin/yugabyted start --background=false --cloud_location=cloud.region.zone1 --base_dir=/var/lib/yugabyte/data &
+
+      # Capture the YugabyteDB process ID so we can wait on it later
       yb_pid=$$!
+
+      # Marker file used to remember that initial schema import has already happened
+      # This prevents re-running the SQL import on every container restart
       init_done_marker="/var/lib/yugabyte/data/langfuse_init_done"
+
+      # Wait until the Yugabyte YSQL service is ready to accept connections
+      # pg_isready repeatedly checks the DB until it responds
       until /home/yugabyte/postgres/bin/pg_isready -h yb-server -p 5433 -U yugabyte -d yugabyte; do
         sleep 2
       done
-      if [ ! -f "$$init_done_marker" ]; then
-        echo "YSQL is ready, checking langfuse database..."
-        langfuse_db_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='langfuse'" | tr -d '[:space:]')
-        if [ "$$langfuse_db_exists" != "1" ]; then
-          ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -c "CREATE DATABASE langfuse;"
-        fi
-        ybvoyager_role_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -tAc "SELECT 1 FROM pg_roles WHERE rolname='ybvoyager'" | tr -d '[:space:]')
-        if [ "$$ybvoyager_role_exists" != "1" ]; then
-          ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -c "CREATE ROLE ybvoyager;"
-        fi
-        echo "Importing SQL data into langfuse database..."
-        ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -f /docker-entrypoint-initdb.d/data.sql
-        touch "$$init_done_marker"
-        echo "SQL import completed."
-      else
-        echo "Skipping SQL import: initialization already completed."
+
+      echo "YSQL is ready, checking langfuse database and roles..."
+
+      # Flag to determine if we need to import the schema/data.sql
+      should_import=0
+
+      # ------------------------------------------------------------
+      # Check if the 'langfuse' database already exists
+      # ------------------------------------------------------------
+      langfuse_db_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='langfuse'" | tr -d '[:space:]')
+
+      # If database does not exist, create it and mark import required
+      if [ "$$langfuse_db_exists" != "1" ]; then
+        ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -c "CREATE DATABASE langfuse;"
+        should_import=1
       fi
+
+      # ------------------------------------------------------------
+      # Ensure the required role 'ybvoyager' exists
+      # Some migrations/tools depend on this role
+      # ------------------------------------------------------------
+      ybvoyager_role_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -tAc \
+        "SELECT 1 FROM pg_roles WHERE rolname='ybvoyager'" | tr -d '[:space:]')
+
+      if [ "$$ybvoyager_role_exists" != "1" ]; then
+        ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -c "CREATE ROLE ybvoyager;"
+      fi
+
+      # ------------------------------------------------------------
+      # Check if a key table exists in the langfuse database
+      # 'verification_tokens' is used as a signal that the schema exists
+      # ------------------------------------------------------------
+      verification_tokens_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -tAc \
+        "SELECT 1 FROM information_schema.tables \
+        WHERE table_schema='public' AND table_name='verification_tokens'" | tr -d '[:space:]')
+
+      # If table does not exist, we must run the SQL import
+      if [ "$$verification_tokens_exists" != "1" ]; then
+        should_import=1
+      fi
+
+      # ------------------------------------------------------------
+      # Import database schema/data if needed
+      # Conditions:
+      #   1. Marker file doesn't exist (first startup)
+      #   2. Schema check failed (table missing)
+      # ------------------------------------------------------------
+      if [ ! -f "$$init_done_marker" ] || [ "$$should_import" = "1" ]; then
+
+        echo "Importing SQL data into langfuse database..."
+
+        # Execute SQL initialization script
+        ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse \
+          -f /docker-entrypoint-initdb.d/data.sql
+
+        # Verify the import succeeded by checking the table again
+        verification_tokens_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -tAc \
+          "SELECT 1 FROM information_schema.tables \
+          WHERE table_schema='public' AND table_name='verification_tokens'" | tr -d '[:space:]')
+
+        if [ "$$verification_tokens_exists" != "1" ]; then
+          echo "ERROR: verification_tokens table was not created by SQL import."
+          exit 1
+        fi
+
+        # Create marker file so future restarts skip the import
+        touch "$$init_done_marker"
+
+        echo "SQL import completed."
+
+      else
+        # Schema already exists and marker file present
+        echo "Skipping SQL import: langfuse schema already present."
+      fi
+
+      # Keep container running by waiting on YugabyteDB process
       wait "$$yb_pid"
+
     restart: unless-stopped
+
     cap_add:
       - NET_ADMIN
+
     ports:
       - "5433:5433"
+
+    # Persistent storage for YugabyteDB data
     volumes:
       - langfuse_yugabyte_data:/var/lib/yugabyte/data
       - ./data.sql:/docker-entrypoint-initdb.d/data.sql:ro
+    
+    # ------------------------------------------------------------
+    # Healthcheck verifies:
+    # 1. Database accepts connections
+    # 2. Initialization marker exists
+    # 3. Required schema table exists
+    # ------------------------------------------------------------
     healthcheck:
       test:
         - CMD-SHELL
         - >
-          /home/yugabyte/postgres/bin/pg_isready -h yb-server -p 5433 -U yugabyte -d langfuse &&
-          test -f /var/lib/yugabyte/data/langfuse_init_done
-      interval: 10s
-      timeout: 10s # Increased timeout
-      retries: 15  # Give it more time for the initial heavy import
-      start_period: 180s # Increased start period for Yugabyte startup
+          /home/yugabyte/postgres/bin/pg_isready -h yb-server -p 5433 -U yugabyte -d yugabyte &&
+          test -f /var/lib/yugabyte/data/langfuse_init_done &&
+          test "$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -tAc
+          "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='verification_tokens'"
+          | tr -d '[:space:]')" = "1"
 
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 180s
+      
 volumes:
   langfuse_yugabyte_data:
     driver: local
