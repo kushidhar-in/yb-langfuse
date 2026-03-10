@@ -22,17 +22,13 @@ import {
 import { OrderByState } from "../../interfaces/orderBy";
 import { getTracesByIds } from "./traces";
 import { measureAndReturn } from "../clickhouse/measureAndReturn";
-import {
-  PreferredClickhouseService,
-} from "../clickhouse/client";
+import { PreferredClickhouseService } from "../clickhouse/client";
 import {
   convertObservation,
   enrichObservationWithModelData,
 } from "./observations_converters";
 import { clickhouseSearchCondition } from "../queries/clickhouse-sql/search";
-import {
-  OBSERVATIONS_TO_TRACE_INTERVAL,
-} from "./constants";
+import { OBSERVATIONS_TO_TRACE_INTERVAL } from "./constants";
 import { env } from "../../env";
 import { TracingSearchType } from "../../interfaces/search";
 import { ClickHouseClientConfigOptions } from "@clickhouse/client";
@@ -46,9 +42,7 @@ import { Prisma } from "@prisma/client";
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;
 
-const toClickhouseMetadataRecord = (
-  value: unknown,
-): Record<string, string> => {
+const toClickhouseMetadataRecord = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([k, v]) => [
@@ -547,8 +541,10 @@ const getObservationByIdInternal = async ({
   ];
   if (type) conditions.push(Prisma.sql`type::text = ${type}`);
   if (traceId) conditions.push(Prisma.sql`trace_id = ${traceId}`);
-  if (startTimeWhere.gte) conditions.push(Prisma.sql`start_time >= ${startTimeWhere.gte}`);
-  if (startTimeWhere.lt) conditions.push(Prisma.sql`start_time < ${startTimeWhere.lt}`);
+  if (startTimeWhere.gte)
+    conditions.push(Prisma.sql`start_time >= ${startTimeWhere.gte}`);
+  if (startTimeWhere.lt)
+    conditions.push(Prisma.sql`start_time < ${startTimeWhere.lt}`);
   const rows = await prisma.$queryRaw<PgObservationRow[]>(Prisma.sql`
     SELECT *
     FROM observations
@@ -771,9 +767,11 @@ const getObservationsTableInternal = async <T>(
     if (!expr) continue;
 
     if (f.type === "datetime") {
-      if (f.operator === ">=") conditions.push(Prisma.sql`${expr} >= ${f.value}`);
+      if (f.operator === ">=")
+        conditions.push(Prisma.sql`${expr} >= ${f.value}`);
       if (f.operator === ">") conditions.push(Prisma.sql`${expr} > ${f.value}`);
-      if (f.operator === "<=") conditions.push(Prisma.sql`${expr} <= ${f.value}`);
+      if (f.operator === "<=")
+        conditions.push(Prisma.sql`${expr} <= ${f.value}`);
       if (f.operator === "<") conditions.push(Prisma.sql`${expr} < ${f.value}`);
       continue;
     }
@@ -781,8 +779,10 @@ const getObservationsTableInternal = async <T>(
       if (f.operator === "=") conditions.push(Prisma.sql`${expr} = ${f.value}`);
       if (f.operator === ">") conditions.push(Prisma.sql`${expr} > ${f.value}`);
       if (f.operator === "<") conditions.push(Prisma.sql`${expr} < ${f.value}`);
-      if (f.operator === ">=") conditions.push(Prisma.sql`${expr} >= ${f.value}`);
-      if (f.operator === "<=") conditions.push(Prisma.sql`${expr} <= ${f.value}`);
+      if (f.operator === ">=")
+        conditions.push(Prisma.sql`${expr} >= ${f.value}`);
+      if (f.operator === "<=")
+        conditions.push(Prisma.sql`${expr} <= ${f.value}`);
       continue;
     }
     if (f.type === "string") {
@@ -824,9 +824,12 @@ const getObservationsTableInternal = async <T>(
     conditions.push(Prisma.sql`(${Prisma.join(searchConds, " OR ")})`);
   }
 
-  const orderExpr = columnExpr(opts.orderBy?.column ?? "startTime") ?? Prisma.sql`o.start_time`;
+  const orderExpr =
+    columnExpr(opts.orderBy?.column ?? "startTime") ?? Prisma.sql`o.start_time`;
   const orderDir =
-    opts.orderBy?.order?.toLowerCase() === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+    opts.orderBy?.order?.toLowerCase() === "asc"
+      ? Prisma.sql`ASC`
+      : Prisma.sql`DESC`;
 
   const fromWithJoin = Prisma.sql`
     FROM observations o
@@ -893,7 +896,11 @@ export const getObservationsGroupedByModel = async (
   filter: FilterState,
 ) => {
   const timeConditions = filter
-    .filter((f) => f.type === "datetime" && (f.column === "Start Time" || f.column === "startTime"))
+    .filter(
+      (f) =>
+        f.type === "datetime" &&
+        (f.column === "Start Time" || f.column === "startTime"),
+    )
     .map((f) => {
       if (f.operator === ">=") return Prisma.sql`o.start_time >= ${f.value}`;
       if (f.operator === ">") return Prisma.sql`o.start_time > ${f.value}`;
@@ -919,7 +926,11 @@ export const getObservationsGroupedByModelId = async (
   filter: FilterState,
 ) => {
   const timeConditions = filter
-    .filter((f) => f.type === "datetime" && (f.column === "Start Time" || f.column === "startTime"))
+    .filter(
+      (f) =>
+        f.type === "datetime" &&
+        (f.column === "Start Time" || f.column === "startTime"),
+    )
     .map((f) => {
       if (f.operator === ">=") return Prisma.sql`o.start_time >= ${f.value}`;
       if (f.operator === ">") return Prisma.sql`o.start_time > ${f.value}`;
@@ -946,7 +957,11 @@ export const getObservationsGroupedByName = async (
   type: ObservationType | null = "GENERATION",
 ) => {
   const timeConditions = filter
-    .filter((f) => f.type === "datetime" && (f.column === "Start Time" || f.column === "startTime"))
+    .filter(
+      (f) =>
+        f.type === "datetime" &&
+        (f.column === "Start Time" || f.column === "startTime"),
+    )
     .map((f) => {
       if (f.operator === ">=") return Prisma.sql`o.start_time >= ${f.value}`;
       if (f.operator === ">") return Prisma.sql`o.start_time > ${f.value}`;
@@ -972,7 +987,11 @@ export const getObservationsGroupedByToolName = async (
   filter: FilterState,
 ) => {
   const timeConditions = filter
-    .filter((f) => f.type === "datetime" && (f.column === "Start Time" || f.column === "startTime"))
+    .filter(
+      (f) =>
+        f.type === "datetime" &&
+        (f.column === "Start Time" || f.column === "startTime"),
+    )
     .map((f) => {
       if (f.operator === ">=") return Prisma.sql`o.start_time >= ${f.value}`;
       if (f.operator === ">") return Prisma.sql`o.start_time > ${f.value}`;
@@ -994,7 +1013,11 @@ export const getObservationsGroupedByCalledToolName = async (
   filter: FilterState,
 ) => {
   const timeConditions = filter
-    .filter((f) => f.type === "datetime" && (f.column === "Start Time" || f.column === "startTime"))
+    .filter(
+      (f) =>
+        f.type === "datetime" &&
+        (f.column === "Start Time" || f.column === "startTime"),
+    )
     .map((f) => {
       if (f.operator === ">=") return Prisma.sql`o.start_time >= ${f.value}`;
       if (f.operator === ">") return Prisma.sql`o.start_time > ${f.value}`;
@@ -1016,7 +1039,11 @@ export const getObservationsGroupedByPromptName = async (
   filter: FilterState,
 ) => {
   const timeConditions = filter
-    .filter((f) => f.type === "datetime" && (f.column === "Start Time" || f.column === "startTime"))
+    .filter(
+      (f) =>
+        f.type === "datetime" &&
+        (f.column === "Start Time" || f.column === "startTime"),
+    )
     .map((f) => {
       if (f.operator === ">=") return Prisma.sql`o.start_time >= ${f.value}`;
       if (f.operator === ">") return Prisma.sql`o.start_time > ${f.value}`;
@@ -1066,9 +1093,7 @@ export const getCostForTraces = async (
   traceIds: string[],
 ) => {
   if (traceIds.length === 0) return undefined;
-  const lowerBound = new Date(
-    timestamp.getTime() - 2 * 24 * 60 * 60 * 1000,
-  );
+  const lowerBound = new Date(timestamp.getTime() - 2 * 24 * 60 * 60 * 1000);
   const rows = await prisma.$queryRaw<Array<{ total_cost: string }>>(Prisma.sql`
     WITH selected_observations AS (
       SELECT DISTINCT ON (o.id, o.project_id)
@@ -1399,7 +1424,9 @@ export const getObservationCountsByProjectInCreationInterval = async ({
   start: Date;
   end: Date;
 }) => {
-  const rows = await prisma.$queryRaw<Array<{ project_id: string; count: bigint }>>(
+  const rows = await prisma.$queryRaw<
+    Array<{ project_id: string; count: bigint }>
+  >(
     Prisma.sql`
       SELECT project_id, count(*)::bigint as count
       FROM observations
@@ -1439,7 +1466,9 @@ export const getTraceIdsForObservations = async (
 ) => {
   if (observationIds.length === 0) return [];
 
-  const rows = await prisma.$queryRaw<Array<{ id: string; trace_id: string }>>(Prisma.sql`
+  const rows = await prisma.$queryRaw<
+    Array<{ id: string; trace_id: string }>
+  >(Prisma.sql`
     SELECT trace_id, id
     FROM observations
     WHERE project_id = ${projectId}

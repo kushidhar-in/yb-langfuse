@@ -103,7 +103,9 @@ export const _handleGetScoreById = async ({
     ORDER BY s.id, s.project_id, s.event_ts DESC
     LIMIT 1
   `);
-  return rows.map((row) => convertClickhouseScoreToDomain(mapRowToReadType(row))).shift();
+  return rows
+    .map((row) => convertClickhouseScoreToDomain(mapRowToReadType(row)))
+    .shift();
 };
 
 /**
@@ -134,5 +136,7 @@ export const _handleGetScoresByIds = async ({
       ${dataTypes ? Prisma.sql`AND s.data_type::text IN (${Prisma.join(dataTypes as readonly string[])})` : Prisma.empty}
     ORDER BY s.id, s.project_id, s.event_ts DESC
   `);
-  return rows.map((row) => convertClickhouseScoreToDomain(mapRowToReadType(row)));
+  return rows.map((row) =>
+    convertClickhouseScoreToDomain(mapRowToReadType(row)),
+  );
 };

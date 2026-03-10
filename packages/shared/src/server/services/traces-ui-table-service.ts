@@ -212,10 +212,14 @@ async function getTracesTableGeneric(
   }
 
   const conditions: Prisma.Sql[] = [Prisma.sql`project_id = ${projectId}`];
-  if (timestampWhere.gte) conditions.push(Prisma.sql`timestamp >= ${timestampWhere.gte}`);
-  if (timestampWhere.gt) conditions.push(Prisma.sql`timestamp > ${timestampWhere.gt}`);
-  if (timestampWhere.lte) conditions.push(Prisma.sql`timestamp <= ${timestampWhere.lte}`);
-  if (timestampWhere.lt) conditions.push(Prisma.sql`timestamp < ${timestampWhere.lt}`);
+  if (timestampWhere.gte)
+    conditions.push(Prisma.sql`timestamp >= ${timestampWhere.gte}`);
+  if (timestampWhere.gt)
+    conditions.push(Prisma.sql`timestamp > ${timestampWhere.gt}`);
+  if (timestampWhere.lte)
+    conditions.push(Prisma.sql`timestamp <= ${timestampWhere.lte}`);
+  if (timestampWhere.lt)
+    conditions.push(Prisma.sql`timestamp < ${timestampWhere.lt}`);
   if (searchQuery) {
     const pattern = `%${searchQuery}%`;
     conditions.push(Prisma.sql`
@@ -365,38 +369,46 @@ async function getTracesTableGeneric(
           ? String(
               Math.max(
                 0,
-                ...obs.map((o) =>
-                  (o.end_time ?? o.start_time).getTime() - o.start_time.getTime(),
+                ...obs.map(
+                  (o) =>
+                    (o.end_time ?? o.start_time).getTime() -
+                    o.start_time.getTime(),
                 ),
               ),
             )
           : "0",
-      usage_details: obs.reduce<Record<string, number>>((acc, o) => {
-        const usage = (o.usage_details ?? {}) as Record<string, unknown>;
-        for (const [k, v] of Object.entries(usage)) {
-          const n = Number(v ?? 0);
-          if (Number.isFinite(n)) acc[k] = (acc[k] ?? 0) + n;
-        }
-        return acc;
-      }, { input: 0, output: 0, total: 0 }),
-      cost_details: obs.reduce<Record<string, number>>((acc, o) => {
-        const cost = (o.cost_details ?? {}) as Record<string, unknown>;
-        const totalCost = Number(o.total_cost ?? NaN);
-        const detailTotal = Number(cost.total ?? NaN);
-        const resolvedTotal = Number.isFinite(totalCost)
-          ? totalCost
-          : Number.isFinite(detailTotal)
-            ? detailTotal
-            : 0;
-        acc.total += resolvedTotal;
+      usage_details: obs.reduce<Record<string, number>>(
+        (acc, o) => {
+          const usage = (o.usage_details ?? {}) as Record<string, unknown>;
+          for (const [k, v] of Object.entries(usage)) {
+            const n = Number(v ?? 0);
+            if (Number.isFinite(n)) acc[k] = (acc[k] ?? 0) + n;
+          }
+          return acc;
+        },
+        { input: 0, output: 0, total: 0 },
+      ),
+      cost_details: obs.reduce<Record<string, number>>(
+        (acc, o) => {
+          const cost = (o.cost_details ?? {}) as Record<string, unknown>;
+          const totalCost = Number(o.total_cost ?? NaN);
+          const detailTotal = Number(cost.total ?? NaN);
+          const resolvedTotal = Number.isFinite(totalCost)
+            ? totalCost
+            : Number.isFinite(detailTotal)
+              ? detailTotal
+              : 0;
+          acc.total += resolvedTotal;
 
-        for (const [k, v] of Object.entries(cost)) {
-          if (k === "total") continue;
-          const n = Number(v ?? 0);
-          if (Number.isFinite(n)) acc[k] = (acc[k] ?? 0) + n;
-        }
-        return acc;
-      }, { input: 0, output: 0, total: 0 }),
+          for (const [k, v] of Object.entries(cost)) {
+            if (k === "total") continue;
+            const n = Number(v ?? 0);
+            if (Number.isFinite(n)) acc[k] = (acc[k] ?? 0) + n;
+          }
+          return acc;
+        },
+        { input: 0, output: 0, total: 0 },
+      ),
       scores_avg: Object.values(
         scoreRows.reduce<
           Record<string, { name: string; sum: number; count: number }>

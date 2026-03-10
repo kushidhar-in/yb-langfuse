@@ -1,9 +1,6 @@
 import { type Flag } from "@/src/features/feature-flags/types";
 import { type ProjectScope } from "@/src/features/rbac/constants/projectAccessRights";
-import {
-  ListTree,
-  type LucideIcon,
-} from "lucide-react";
+import { ListTree, type LucideIcon } from "lucide-react";
 import { type ReactNode } from "react";
 import { type Entitlement } from "@/src/features/entitlements/constants/entitlements";
 import { type User } from "next-auth";
@@ -51,4 +48,3 @@ export const ROUTES: Route[] = [
     pathname: `/project/[projectId]/traces`,
   },
 ];
-

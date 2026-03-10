@@ -42,9 +42,7 @@ import { Prisma } from "@prisma/client";
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;
 
-const toClickhouseMetadataRecord = (
-  value: unknown,
-): Record<string, string> => {
+const toClickhouseMetadataRecord = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([k, v]) => [
@@ -95,9 +93,7 @@ type PgTraceRow = {
   event_ts: Date;
 };
 
-const toTraceRecordReadType = (
-  trace: PgTraceRow,
-): TraceRecordReadType => ({
+const toTraceRecordReadType = (trace: PgTraceRow): TraceRecordReadType => ({
   id: trace.id,
   name: trace.name,
   user_id: trace.user_id,
@@ -275,8 +271,12 @@ export const upsertTrace = async (trace: Partial<TraceRecordReadType>) => {
 
   const timestamp = parseDateInput(trace.timestamp);
 
-  const createdAt = trace.created_at ? parseDateInput(trace.created_at) : timestamp;
-  const updatedAt = trace.updated_at ? parseDateInput(trace.updated_at) : timestamp;
+  const createdAt = trace.created_at
+    ? parseDateInput(trace.created_at)
+    : timestamp;
+  const updatedAt = trace.updated_at
+    ? parseDateInput(trace.updated_at)
+    : timestamp;
   await prisma.$executeRaw`
     DELETE FROM traces
     WHERE project_id = ${trace.project_id as string}
@@ -330,7 +330,10 @@ export const getTracesByIds = async (
   `);
 
   return records.map((record) =>
-    convertClickhouseToDomain(toTraceRecordReadType(record), DEFAULT_RENDERING_PROPS),
+    convertClickhouseToDomain(
+      toTraceRecordReadType(record),
+      DEFAULT_RENDERING_PROPS,
+    ),
   );
 };
 
@@ -572,8 +575,10 @@ export const getTraceById = async ({
     Prisma.sql`id = ${traceId}`,
     Prisma.sql`project_id = ${projectId}`,
   ];
-  if (timestampWhere.gte) conditions.push(Prisma.sql`timestamp >= ${timestampWhere.gte}`);
-  if (timestampWhere.lt) conditions.push(Prisma.sql`timestamp < ${timestampWhere.lt}`);
+  if (timestampWhere.gte)
+    conditions.push(Prisma.sql`timestamp >= ${timestampWhere.gte}`);
+  if (timestampWhere.lt)
+    conditions.push(Prisma.sql`timestamp < ${timestampWhere.lt}`);
   const records = await prisma.$queryRaw<PgTraceRow[]>(Prisma.sql`
     SELECT *
     FROM traces
@@ -633,12 +638,18 @@ export const getTracesGroupedByName = async (
         Prisma.sql`name IS NOT NULL`,
       ];
       for (const tf of timestampFilters) {
-        if (tf.operator === ">=") conditions.push(Prisma.sql`timestamp >= ${tf.value}`);
-        if (tf.operator === ">") conditions.push(Prisma.sql`timestamp > ${tf.value}`);
-        if (tf.operator === "<=") conditions.push(Prisma.sql`timestamp <= ${tf.value}`);
-        if (tf.operator === "<") conditions.push(Prisma.sql`timestamp < ${tf.value}`);
+        if (tf.operator === ">=")
+          conditions.push(Prisma.sql`timestamp >= ${tf.value}`);
+        if (tf.operator === ">")
+          conditions.push(Prisma.sql`timestamp > ${tf.value}`);
+        if (tf.operator === "<=")
+          conditions.push(Prisma.sql`timestamp <= ${tf.value}`);
+        if (tf.operator === "<")
+          conditions.push(Prisma.sql`timestamp < ${tf.value}`);
       }
-      const rows = await prisma.$queryRaw<Array<{ name: string; count: bigint }>>(
+      const rows = await prisma.$queryRaw<
+        Array<{ name: string; count: bigint }>
+      >(
         Prisma.sql`
           SELECT name, COUNT(*)::bigint AS count
           FROM traces
@@ -684,10 +695,14 @@ export const getTracesGroupedBySessionId = async (
         Prisma.sql`session_id != ''`,
       ];
       for (const tf of timestampFilters) {
-        if (tf.operator === ">=") conditions.push(Prisma.sql`timestamp >= ${tf.value}`);
-        if (tf.operator === ">") conditions.push(Prisma.sql`timestamp > ${tf.value}`);
-        if (tf.operator === "<=") conditions.push(Prisma.sql`timestamp <= ${tf.value}`);
-        if (tf.operator === "<") conditions.push(Prisma.sql`timestamp < ${tf.value}`);
+        if (tf.operator === ">=")
+          conditions.push(Prisma.sql`timestamp >= ${tf.value}`);
+        if (tf.operator === ">")
+          conditions.push(Prisma.sql`timestamp > ${tf.value}`);
+        if (tf.operator === "<=")
+          conditions.push(Prisma.sql`timestamp <= ${tf.value}`);
+        if (tf.operator === "<")
+          conditions.push(Prisma.sql`timestamp < ${tf.value}`);
       }
       if (searchQuery) {
         conditions.push(Prisma.sql`session_id ILIKE ${`%${searchQuery}%`}`);
@@ -703,7 +718,10 @@ export const getTracesGroupedBySessionId = async (
         ${limit !== undefined ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}
         ${offset !== undefined ? Prisma.sql`OFFSET ${offset}` : Prisma.empty}
       `);
-      return rows.map((r) => ({ session_id: r.session_id, count: String(r.count) }));
+      return rows.map((r) => ({
+        session_id: r.session_id,
+        count: String(r.count),
+      }));
     },
   });
 };
@@ -739,15 +757,21 @@ export const getTracesGroupedByUsers = async (
         Prisma.sql`user_id != ''`,
       ];
       for (const tf of timestampFilters) {
-        if (tf.operator === ">=") conditions.push(Prisma.sql`timestamp >= ${tf.value}`);
-        if (tf.operator === ">") conditions.push(Prisma.sql`timestamp > ${tf.value}`);
-        if (tf.operator === "<=") conditions.push(Prisma.sql`timestamp <= ${tf.value}`);
-        if (tf.operator === "<") conditions.push(Prisma.sql`timestamp < ${tf.value}`);
+        if (tf.operator === ">=")
+          conditions.push(Prisma.sql`timestamp >= ${tf.value}`);
+        if (tf.operator === ">")
+          conditions.push(Prisma.sql`timestamp > ${tf.value}`);
+        if (tf.operator === "<=")
+          conditions.push(Prisma.sql`timestamp <= ${tf.value}`);
+        if (tf.operator === "<")
+          conditions.push(Prisma.sql`timestamp < ${tf.value}`);
       }
       if (searchQuery) {
         conditions.push(Prisma.sql`user_id ILIKE ${`%${searchQuery}%`}`);
       }
-      const rows = await prisma.$queryRaw<Array<{ user: string; count: bigint }>>(
+      const rows = await prisma.$queryRaw<
+        Array<{ user: string; count: bigint }>
+      >(
         Prisma.sql`
           SELECT user_id AS user, COUNT(*)::bigint AS count
           FROM traces
@@ -789,12 +813,18 @@ export const getTracesGroupedByTags = async (props: GroupedTracesQueryProp) => {
       const timestampFilters = (filter ?? []).filter(
         (f) => f.column === "timestamp" && f.type === "datetime",
       ) as Array<{ operator: string; value: Date }>;
-      const conditions: Prisma.Sql[] = [Prisma.sql`t.project_id = ${projectId}`];
+      const conditions: Prisma.Sql[] = [
+        Prisma.sql`t.project_id = ${projectId}`,
+      ];
       for (const tf of timestampFilters) {
-        if (tf.operator === ">=") conditions.push(Prisma.sql`t.timestamp >= ${tf.value}`);
-        if (tf.operator === ">") conditions.push(Prisma.sql`t.timestamp > ${tf.value}`);
-        if (tf.operator === "<=") conditions.push(Prisma.sql`t.timestamp <= ${tf.value}`);
-        if (tf.operator === "<") conditions.push(Prisma.sql`t.timestamp < ${tf.value}`);
+        if (tf.operator === ">=")
+          conditions.push(Prisma.sql`t.timestamp >= ${tf.value}`);
+        if (tf.operator === ">")
+          conditions.push(Prisma.sql`t.timestamp > ${tf.value}`);
+        if (tf.operator === "<=")
+          conditions.push(Prisma.sql`t.timestamp <= ${tf.value}`);
+        if (tf.operator === "<")
+          conditions.push(Prisma.sql`t.timestamp < ${tf.value}`);
       }
       const rows = await prisma.$queryRaw<Array<{ value: string }>>(Prisma.sql`
         SELECT DISTINCT tag.value
@@ -856,9 +886,10 @@ export const getTracesIdentifierForSession = async (
     id: row.id,
     userId: row.user_id,
     name: row.name,
-    timestamp: row.timestamp instanceof Date
-      ? row.timestamp
-      : parseClickhouseUTCDateTimeFormat(row.timestamp),
+    timestamp:
+      row.timestamp instanceof Date
+        ? row.timestamp
+        : parseClickhouseUTCDateTimeFormat(row.timestamp),
     environment: row.environment,
   }));
 };
@@ -1113,9 +1144,10 @@ export const getUserMetrics = async (
           (f.column === "timestamp" || f.column === "Timestamp") &&
           (f.operator === ">=" || f.operator === ">"),
       )?.value;
-      const observationLowerBound = fromTimestamp instanceof Date
-        ? new Date(fromTimestamp.getTime() - 2 * 24 * 60 * 60 * 1000)
-        : null;
+      const observationLowerBound =
+        fromTimestamp instanceof Date
+          ? new Date(fromTimestamp.getTime() - 2 * 24 * 60 * 60 * 1000)
+          : null;
 
       const rows = await prisma.$queryRaw<
         Array<{

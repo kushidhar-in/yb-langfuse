@@ -49,9 +49,7 @@ import { Prisma } from "@prisma/client";
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;
 
-const toClickhouseMetadataRecord = (
-  value: unknown,
-): Record<string, string> => {
+const toClickhouseMetadataRecord = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([k, v]) => [
@@ -62,36 +60,37 @@ const toClickhouseMetadataRecord = (
 };
 
 const jsonbHasAnyKeys = (value: unknown) =>
-  !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length > 0;
+  !!value &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  Object.keys(value as Record<string, unknown>).length > 0;
 
-const toScoreRecordReadType = (
-  score: {
-    id: string;
-    timestamp: Date;
-    project_id: string;
-    name: string | null;
-    value: number | null;
-    source: string;
-    author_user_id: string | null;
-    comment: string | null;
-    trace_id: string | null;
-    observation_id: string | null;
-    config_id: string | null;
-    string_value: string | null;
-    queue_id: string | null;
-    created_at: Date;
-    updated_at: Date;
-    data_type: string;
-    metadata: Record<string, unknown> | null;
-    session_id: string | null;
-    dataset_run_id: string | null;
-    environment: string | null;
-    long_string_value: string | null;
-    execution_trace_id: string | null;
-    event_ts: Date;
-    is_deleted: boolean;
-  },
-): ScoreRecordReadType => ({
+const toScoreRecordReadType = (score: {
+  id: string;
+  timestamp: Date;
+  project_id: string;
+  name: string | null;
+  value: number | null;
+  source: string;
+  author_user_id: string | null;
+  comment: string | null;
+  trace_id: string | null;
+  observation_id: string | null;
+  config_id: string | null;
+  string_value: string | null;
+  queue_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+  data_type: string;
+  metadata: Record<string, unknown> | null;
+  session_id: string | null;
+  dataset_run_id: string | null;
+  environment: string | null;
+  long_string_value: string | null;
+  execution_trace_id: string | null;
+  event_ts: Date;
+  is_deleted: boolean;
+}): ScoreRecordReadType => ({
   id: score.id,
   timestamp: toClickhouseDateTimeString(score.timestamp) ?? "",
   project_id: score.project_id,
@@ -132,7 +131,11 @@ const normalizeTimestampColumn = (column: string) => {
   return c === "timestamp";
 };
 
-const SCORE_DATA_TYPE_VALUES = new Set(["NUMERIC", "BOOLEAN", "CATEGORICAL"] as const);
+const SCORE_DATA_TYPE_VALUES = new Set([
+  "NUMERIC",
+  "BOOLEAN",
+  "CATEGORICAL",
+] as const);
 const toScoreDataTypeEnum = (value: unknown) => {
   const normalized = String(value ?? "NUMERIC").toUpperCase();
   return SCORE_DATA_TYPE_VALUES.has(normalized as any) ? normalized : "NUMERIC";
@@ -168,7 +171,9 @@ export const searchExistingAnnotationScore = async (
       LIMIT 1
     `)
   )[0];
-  return row ? convertClickhouseScoreToDomain(toScoreRecordReadType(row)) : undefined;
+  return row
+    ? convertClickhouseScoreToDomain(toScoreRecordReadType(row))
+    : undefined;
 };
 
 export const getScoreById = async ({
@@ -202,7 +207,9 @@ export const getScoresByIds = async (
       AND data_type::text IN (${Prisma.join(AGGREGATABLE_SCORE_TYPES as unknown as string[])})
     ORDER BY updated_at DESC
   `);
-  return rows.map((row) => convertClickhouseScoreToDomain(toScoreRecordReadType(row)));
+  return rows.map((row) =>
+    convertClickhouseScoreToDomain(toScoreRecordReadType(row)),
+  );
 };
 
 /**
@@ -216,8 +223,12 @@ export const upsertScore = async (score: Partial<ScoreRecordReadType>) => {
   const timestamp = parseDateInput(score.timestamp);
   const dataType = toScoreDataTypeEnum(score.data_type);
 
-  const createdAt = score.created_at ? parseDateInput(score.created_at) : timestamp;
-  const updatedAt = score.updated_at ? parseDateInput(score.updated_at) : timestamp;
+  const createdAt = score.created_at
+    ? parseDateInput(score.created_at)
+    : timestamp;
+  const updatedAt = score.updated_at
+    ? parseDateInput(score.updated_at)
+    : timestamp;
   await prisma.$executeRaw`
     DELETE FROM scores
     WHERE project_id = ${score.project_id as string}
@@ -310,7 +321,9 @@ export const getScoresForSessions = async <
     includeHasMetadata = false,
   } = props;
 
-  const rowsRaw = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
+  const rowsRaw = await prisma.$queryRaw<
+    Array<Record<string, unknown>>
+  >(Prisma.sql`
     WITH ranked AS (
       SELECT
         s.*,
@@ -364,7 +377,9 @@ export const getScoresForDatasetRuns = async <
     includeHasMetadata = false,
   } = props;
 
-  const rowsRaw = await prisma.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
+  const rowsRaw = await prisma.$queryRaw<
+    Array<Record<string, unknown>>
+  >(Prisma.sql`
     WITH ranked AS (
       SELECT
         s.*,
@@ -489,13 +504,17 @@ const getScoresForTracesInternal = async <
   const rows = rowsRaw.map((row) => ({
     ...toScoreRecordReadType(row),
     metadata: excludeMetadata
-      ? ({} as ExcludeMetadata extends true ? never : ScoreRecordReadType["metadata"])
-      : (toClickhouseMetadataRecord(row.metadata) as ExcludeMetadata extends true
+      ? ({} as ExcludeMetadata extends true
+          ? never
+          : ScoreRecordReadType["metadata"])
+      : (toClickhouseMetadataRecord(
+          row.metadata,
+        ) as ExcludeMetadata extends true
           ? never
           : ScoreRecordReadType["metadata"]),
-    has_metadata: ((jsonbHasAnyKeys(row.metadata) ? 1 : 0) as unknown as IncludeHasMetadata extends true
-      ? 0 | 1
-      : never),
+    has_metadata: (jsonbHasAnyKeys(row.metadata)
+      ? 1
+      : 0) as unknown as IncludeHasMetadata extends true ? 0 | 1 : never,
   }));
 
   const includeMetadataPayload = excludeMetadata ? false : true;
@@ -603,7 +622,11 @@ export const getScoresForObservations = async <
 
   const rows = rowsRaw.map((row) => ({
     ...toScoreRecordReadType(row as any),
-    metadata: (excludeMetadata ? {} : toClickhouseMetadataRecord((row as any).metadata)) as ExcludeMetadata extends true
+    metadata: (excludeMetadata
+      ? {}
+      : toClickhouseMetadataRecord(
+          (row as any).metadata,
+        )) as ExcludeMetadata extends true
       ? never
       : ScoreRecordReadType["metadata"],
     has_metadata: (row.has_metadata ?? 0) as IncludeHasMetadata extends true
@@ -637,11 +660,13 @@ export const getScoresGroupedByNameSourceType = async ({
   fromTimestamp?: Date;
   toTimestamp?: Date;
 }) => {
-  const rows = await prisma.$queryRaw<{
-    name: string;
-    source: string;
-    data_type: string;
-  }[]>(Prisma.sql`
+  const rows = await prisma.$queryRaw<
+    {
+      name: string;
+      source: string;
+      data_type: string;
+    }[]
+  >(Prisma.sql`
     SELECT
       s.name as name,
       s.source as source,
@@ -700,10 +725,12 @@ export const getCategoricalScoresGroupedByName = async (
       return Prisma.sql`s.timestamp < ${f.value}`;
     });
 
-  const rows = await prisma.$queryRaw<{
-    label: string;
-    values: string[];
-  }[]>(Prisma.sql`
+  const rows = await prisma.$queryRaw<
+    {
+      label: string;
+      values: string[];
+    }[]
+  >(Prisma.sql`
     SELECT
       s.name AS label,
       ARRAY_REMOVE(ARRAY_AGG(DISTINCT s.string_value), NULL) AS values
@@ -1561,7 +1588,9 @@ export const getScoreCountsByProjectInCreationInterval = async ({
   start: Date;
   end: Date;
 }) => {
-  const rows = await prisma.$queryRaw<Array<{ project_id: string; count: bigint }>>(
+  const rows = await prisma.$queryRaw<
+    Array<{ project_id: string; count: bigint }>
+  >(
     Prisma.sql`
       SELECT project_id, count(*)::bigint as count
       FROM scores
@@ -1831,7 +1860,9 @@ export const getScoreMetadataById = async (
   id: string,
   source?: ScoreSourceType,
 ) => {
-  const rows = await prisma.$queryRaw<Array<{ metadata: Record<string, unknown> | null }>>(
+  const rows = await prisma.$queryRaw<
+    Array<{ metadata: Record<string, unknown> | null }>
+  >(
     Prisma.sql`
       SELECT DISTINCT ON (s.id, s.project_id)
         s.metadata
