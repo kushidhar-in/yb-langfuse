@@ -1,5 +1,6 @@
 import { AGGREGATABLE_SCORE_TYPES } from "../../domain/scores";
-import { queryClickhouse } from "./clickhouse";
+import { prisma } from "../../db";
+import { Prisma } from "@prisma/client";
 
 export type EnvironmentFilterProps = {
   projectId: string;
@@ -11,48 +12,64 @@ export const getEnvironmentsForProject = async (
 ): Promise<{ environment: string }[]> => {
   const { projectId, fromTimestamp } = props;
 
-  const query = `
-    (
-      SELECT distinct environment
-      FROM traces
-      WHERE project_id = {projectId: String}
-      ${fromTimestamp ? "AND timestamp >= {fromTimestamp: DateTime64(3)}" : ""}
-    ) UNION ALL (
-      SELECT distinct environment
-      FROM observations
-      WHERE project_id = {projectId: String}
-      ${fromTimestamp ? "AND start_time >= {fromTimestamp: DateTime64(3)}" : ""}
-    ) UNION ALL (
-      SELECT distinct environment
-      FROM scores
-      WHERE project_id = {projectId: String}
-      AND data_type IN ({dataTypes: Array(String)})
-      ${fromTimestamp ? "AND timestamp >= {fromTimestamp: DateTime64(3)}" : ""}
-    )
-  `;
+  const envColumns = await prisma.$queryRaw<
+    Array<{ table_name: string }>
+  >(Prisma.sql`
+    SELECT table_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND column_name = 'environment'
+      AND table_name IN ('traces', 'observations', 'scores')
+  `);
+  const tableSet = new Set(envColumns.map((r) => r.table_name));
 
-  const results = await queryClickhouse<{
-    environment: string;
-  }>({
-    query,
-    params: {
-      projectId,
-      fromTimestamp,
-      dataTypes: AGGREGATABLE_SCORE_TYPES,
-    },
-    tags: {
-      feature: "tracing",
-      type: "environment",
-      kind: "byId",
-      projectId,
-    },
-  });
+  const results: Array<{ environment: string | null }> = [];
+
+  if (tableSet.has("traces")) {
+    const rows = await prisma.$queryRaw<Array<{ environment: string | null }>>(
+      Prisma.sql`
+        SELECT DISTINCT environment
+        FROM traces
+        WHERE project_id = ${projectId}
+        ${fromTimestamp ? Prisma.sql`AND timestamp >= ${fromTimestamp}` : Prisma.empty}
+      `,
+    );
+    results.push(...rows);
+  }
+  if (tableSet.has("observations")) {
+    const rows = await prisma.$queryRaw<Array<{ environment: string | null }>>(
+      Prisma.sql`
+        SELECT DISTINCT environment
+        FROM observations
+        WHERE project_id = ${projectId}
+        ${fromTimestamp ? Prisma.sql`AND start_time >= ${fromTimestamp}` : Prisma.empty}
+      `,
+    );
+    results.push(...rows);
+  }
+  if (tableSet.has("scores")) {
+    const rows = await prisma.$queryRaw<Array<{ environment: string | null }>>(
+      Prisma.sql`
+        SELECT DISTINCT environment
+        FROM scores
+        WHERE project_id = ${projectId}
+          AND data_type::text IN (${Prisma.join(AGGREGATABLE_SCORE_TYPES as unknown as string[])})
+        ${fromTimestamp ? Prisma.sql`AND timestamp >= ${fromTimestamp}` : Prisma.empty}
+      `,
+    );
+    results.push(...rows);
+  }
   // Always add default environment to list
   results.push({ environment: "default" });
 
-  return Array.from(new Set(results.map((e) => e.environment))).map(
-    (environment) => ({
-      environment,
-    }),
-  );
+  const environments: string[] = [];
+  for (const row of results) {
+    if (typeof row.environment === "string" && row.environment.length > 0) {
+      environments.push(row.environment);
+    }
+  }
+
+  return Array.from(new Set(environments)).map((environment) => ({
+    environment,
+  }));
 };

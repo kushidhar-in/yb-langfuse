@@ -92,6 +92,9 @@ const EnvSchema = z.object({
     .number()
     .positive()
     .default(3),
+  LANGFUSE_DISABLE_CLICKHOUSE_WRITES: z
+    .enum(["true", "false"])
+    .default("false"),
 
   LANGFUSE_USE_AZURE_BLOB: z.enum(["true", "false"]).default("false"),
 

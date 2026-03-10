@@ -6,6 +6,10 @@ await import("./src/env.mjs");
 import { withSentryConfig } from "@sentry/nextjs";
 import { env } from "./src/env.mjs";
 import bundleAnalyzer from "@next/bundle-analyzer";
+import {
+  TRACING_ONLY_REDIRECTS,
+  REDIRECT_PROJECT_SEGMENTS,
+} from "./src/config/routing.mjs";
 
 /**
  * CSP headers
@@ -186,6 +190,24 @@ const nextConfig = {
         ],
       },
     ];
+  },
+
+  async redirects() {
+    if (!TRACING_ONLY_REDIRECTS) return [];
+    const basePath = env.NEXT_PUBLIC_BASE_PATH || "";
+    const prefix = basePath ? `${basePath.replace(/\/$/, "")}` : "";
+    return REDIRECT_PROJECT_SEGMENTS.flatMap((segment) => [
+      {
+        source: `${prefix}/project/:projectId/${segment}`,
+        destination: `${prefix}/project/:projectId/traces`,
+        permanent: false,
+      },
+      {
+        source: `${prefix}/project/:projectId/${segment}/:path*`,
+        destination: `${prefix}/project/:projectId/traces`,
+        permanent: false,
+      },
+    ]);
   },
 
   webpack(config, { isServer }) {
