@@ -146,118 +146,73 @@ export const checkTraceExistsAndGetTimestamp = async ({
   maxTimeStamp: Date | undefined;
   exactTimestamp?: Date;
 }): Promise<{ exists: boolean; timestamp?: Date }> => {
-  const { tracesFilter } = getProjectIdDefaultFilter(projectId, {
-    tracesPrefix: "t",
-  });
+  if (filter.length > 0) {
+    logger.warn(
+      "checkTraceExistsAndGetTimestamp ignores non-time filter predicates in PostgreSQL mode",
+      { projectId, traceId },
+    );
+  }
 
-  const timeStampFilter = tracesFilter.find(
-    (f) =>
-      f.field === "timestamp" && (f.operator === ">=" || f.operator === ">"),
-  ) as DateTimeFilter | undefined;
+  const timestampWhere: { gte?: Date; lte?: Date; lt?: Date } = {};
+  if (timestamp) {
+    timestampWhere.gte = new Date(
+      timestamp.getTime() - 2 * 24 * 60 * 60 * 1000,
+    );
+  }
+  if (maxTimeStamp) {
+    timestampWhere.lte = maxTimeStamp;
+  }
+  if (exactTimestamp) {
+    const exactStart = new Date(
+      Date.UTC(
+        exactTimestamp.getUTCFullYear(),
+        exactTimestamp.getUTCMonth(),
+        exactTimestamp.getUTCDate(),
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
+    const exactEnd = new Date(
+      Date.UTC(
+        exactTimestamp.getUTCFullYear(),
+        exactTimestamp.getUTCMonth(),
+        exactTimestamp.getUTCDate() + 1,
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
+    timestampWhere.gte = exactStart;
+    timestampWhere.lt = exactEnd;
+  }
 
-  tracesFilter.push(
-    ...createFilterFromFilterState(filter, tracesTableUiColumnDefinitions),
-    new StringFilter({
-      clickhouseTable: "t",
-      field: "id",
-      operator: "=",
-      value: traceId,
-    }),
-  );
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`id = ${traceId}`,
+    Prisma.sql`project_id = ${projectId}`,
+  ];
+  if (timestampWhere.gte) {
+    conditions.push(Prisma.sql`timestamp >= ${timestampWhere.gte}`);
+  }
+  if (timestampWhere.lte) {
+    conditions.push(Prisma.sql`timestamp <= ${timestampWhere.lte}`);
+  }
+  if (timestampWhere.lt) {
+    conditions.push(Prisma.sql`timestamp < ${timestampWhere.lt}`);
+  }
 
-  const observationFilter = tracesFilter.find(
-    (f) => f.clickhouseTable === "observations",
-  );
-  const tracesFilterRes = tracesFilter.apply();
-  const observationFilterRes = observationFilter?.apply();
+  const rows = await prisma.$queryRaw<Array<{ timestamp: Date }>>(Prisma.sql`
+    SELECT timestamp
+    FROM traces
+    WHERE ${Prisma.join(conditions, " AND ")}
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `);
+  const row = rows[0];
 
-  const observations_cte = `
-    WITH observations_agg AS (
-      SELECT
-        multiIf(
-          arrayExists(x -> x = 'ERROR', groupArray(level)), 'ERROR',
-          arrayExists(x -> x = 'WARNING', groupArray(level)), 'WARNING',
-          arrayExists(x -> x = 'DEFAULT', groupArray(level)), 'DEFAULT',
-          'DEBUG'
-        ) AS aggregated_level,
-        countIf(level = 'ERROR') as error_count,
-        countIf(level = 'WARNING') as warning_count,
-        countIf(level = 'DEFAULT') as default_count,
-        countIf(level = 'DEBUG') as debug_count,
-        trace_id,
-        project_id
-      FROM observations o FINAL
-      WHERE o.project_id = {projectId: String}
-        ${timeStampFilter ? `AND o.start_time >= {traceTimestamp: DateTime64(3)} - ${OBSERVATIONS_TO_TRACE_INTERVAL}` : ""}
-        AND o.start_time >= {timestamp: DateTime64(3)} - ${OBSERVATIONS_TO_TRACE_INTERVAL}
-      GROUP BY trace_id, project_id
-    )
-  `;
-
-  return measureAndReturn({
-    operationName: "checkTraceExistsAndGetTimestamp",
-    projectId,
-    input: {
-      params: {
-        projectId,
-        ...tracesFilterRes.params,
-        ...(observationFilterRes ? observationFilterRes.params : {}),
-        ...(timestamp
-          ? { timestamp: convertDateToClickhouseDateTime(timestamp) }
-          : {}),
-        ...(maxTimeStamp
-          ? { maxTimeStamp: convertDateToClickhouseDateTime(maxTimeStamp) }
-          : {}),
-        ...(exactTimestamp
-          ? { exactTimestamp: convertDateToClickhouseDateTime(exactTimestamp) }
-          : {}),
-      },
-      tags: {
-        feature: "tracing",
-        type: "trace",
-        kind: "exists",
-        projectId,
-        operation_name: "checkTraceExistsAndGetTimestamp",
-      },
-      timestamp: timestamp ?? exactTimestamp,
-    },
-    fn: async (input) => {
-      const query = `
-        ${observations_cte}
-        SELECT
-          t.id as id,
-          t.project_id as project_id,
-          t.timestamp as timestamp
-        FROM traces t FINAL
-        ${observationFilterRes ? `INNER JOIN observations_agg o ON t.id = o.trace_id AND t.project_id = o.project_id` : ""}
-        WHERE ${tracesFilterRes.query}
-        AND t.project_id = {projectId: String}
-        AND t.timestamp >= {timestamp: DateTime64(3)} - ${TRACE_TO_OBSERVATIONS_INTERVAL}
-        ${maxTimeStamp ? `AND t.timestamp <= {maxTimeStamp: DateTime64(3)}` : ""}
-        ${!maxTimeStamp ? `AND t.timestamp <= {timestamp: DateTime64(3)} + INTERVAL 2 DAY` : ""}
-        ${exactTimestamp ? `AND toDate(t.timestamp) = toDate({exactTimestamp: DateTime64(3)})` : ""}
-        GROUP BY t.id, t.project_id, t.timestamp
-      `;
-
-      const rows = await queryClickhouse<{
-        id: string;
-        project_id: string;
-        timestamp: string;
-      }>({
-        query,
-        params: input.params,
-        tags: input.tags,
-      });
-
-      return {
-        exists: rows.length > 0,
-        timestamp:
-          rows.length > 0
-            ? parseClickhouseUTCDateTimeFormat(rows[0].timestamp)
-            : undefined,
-      };
-    },
-  });
+  return { exists: !!row, timestamp: row?.timestamp };
 };
 
 /**
