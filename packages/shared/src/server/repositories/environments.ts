@@ -1,6 +1,8 @@
 import { AGGREGATABLE_SCORE_TYPES } from "../../domain/scores";
-import { prisma } from "../../db";
+import { tracingPrisma } from "../../db";
 import { Prisma } from "@prisma/client";
+
+const prisma = tracingPrisma;
 
 export type EnvironmentFilterProps = {
   projectId: string;

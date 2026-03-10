@@ -36,8 +36,10 @@ import { measureAndReturn } from "../clickhouse/measureAndReturn";
 import { DEFAULT_RENDERING_PROPS, RenderingProps } from "../utils/rendering";
 import { logger } from "../logger";
 import { traceException } from "../instrumentation";
-import { prisma } from "../../db";
+import { tracingPrisma } from "../../db";
 import { Prisma } from "@prisma/client";
+
+const prisma = tracingPrisma;
 
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;

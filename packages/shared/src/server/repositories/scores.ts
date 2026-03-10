@@ -40,11 +40,13 @@ import { parseMetadataCHRecordToDomain } from "../utils/metadata_conversion";
 import type { AnalyticsScoreEvent } from "../analytics-integrations/types";
 import { ClickHouseClientConfigOptions } from "@clickhouse/client";
 import { recordDistribution } from "../instrumentation";
-import { prisma } from "../../db";
+import { tracingPrisma } from "../../db";
 import { measureAndReturn } from "../clickhouse/measureAndReturn";
 import { scoresColumnsTableUiColumnDefinitions } from "../tableMappings/mapScoresColumnsTable";
 import { eventsTraceMetadata } from "../queries/clickhouse-sql/query-fragments";
 import { Prisma } from "@prisma/client";
+
+const prisma = tracingPrisma;
 
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;

@@ -7,8 +7,10 @@ import { parseClickhouseUTCDateTimeFormat } from "../repositories";
 import { TracingSearchType } from "../../interfaces/search";
 import { ObservationLevelType, TraceDomain } from "../../domain";
 import { ClickHouseClientConfigOptions } from "@clickhouse/client";
-import { prisma } from "../../db";
+import { tracingPrisma } from "../../db";
 import { Prisma } from "@prisma/client";
+
+const prisma = tracingPrisma;
 
 export type TracesTableReturnType = Pick<
   TraceRecordReadType,

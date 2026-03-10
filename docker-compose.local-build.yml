@@ -58,7 +58,7 @@
 # Start foreground (live logs):
 #   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up --build
 #
-# Apply tracing Postgres schema (one-shot helper):
+# Apply tracing Postgres schema manually (one-shot helper):
 #   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml run --rm postgres-tracing-schema-init
 #
 # === STOP / DOWN ===
@@ -150,9 +150,11 @@ services:
     ports:
       - "${WEB_HOST_PORT:-3000}:3000"
     environment:
-      # Database — use container hostname instead of 127.0.0.1
-      DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
-      DIRECT_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
+      # Metadata DB (Prisma migrations + metadata tables)
+      DATABASE_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
+      DIRECT_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
+      # Tracing DB (traces/observations/scores repositories)
+      TRACING_DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
 
       # ClickHouse (kept for env compatibility; tracing repositories use Postgres)
       CLICKHOUSE_MIGRATION_URL: "clickhouse://${CLICKHOUSE_CONTAINER_NAME:-langfuse-clickhouse}:9000"
@@ -235,13 +237,19 @@ services:
     container_name: ${WORKER_CONTAINER_NAME:-langfuse-worker}
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
       postgres-tracing:
         condition: service_healthy
+      postgres-tracing-schema-init:
+        condition: service_completed_successfully
     ports:
       - "${WORKER_HOST_PORT:-3030}:3030"
     environment:
-      # Database
-      DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
+      # Metadata DB
+      DATABASE_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
+      # Tracing DB (traces/observations/scores repositories)
+      TRACING_DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
 
       # ClickHouse (kept for env compatibility; tracing repositories use Postgres)
       CLICKHOUSE_MIGRATION_URL: "clickhouse://${CLICKHOUSE_CONTAINER_NAME:-langfuse-clickhouse}:9000"
@@ -302,7 +310,6 @@ services:
   postgres-tracing-schema-init:
     image: docker.io/postgres:${POSTGRES_VERSION:-15}
     container_name: ${POSTGRES_SCHEMA_INIT_CONTAINER_NAME:-langfuse-postgres-tracing-schema-init}
-    profiles: ["tracing-schema-reset"]
     depends_on:
       postgres-tracing:
         condition: service_healthy
