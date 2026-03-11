@@ -112,28 +112,28 @@
 # Unchanged layers (e.g. pnpm install, base stages) are reused. Use --no-cache for full rebuild.
 
 services:
-  postgres-tracing:
-    image: docker.io/postgres:${POSTGRES_VERSION:-15}
-    container_name: ${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 3s
-      timeout: 3s
-      retries: 10
-    command: ["postgres", "-c", "log_statement=all"]
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-postgres}
-      - TZ=UTC
-      - PGTZ=UTC
-    ports:
-      - "${HOST_IP:-127.0.0.1}:${TRACING_POSTGRES_HOST_PORT:-55433}:5432"
-    volumes:
-      - langfuse_postgres_tracing_data:/var/lib/postgresql/data
-    networks:
-      - default
+  # postgres-tracing:
+  #   image: docker.io/postgres:${POSTGRES_VERSION:-15}
+  #   container_name: ${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 3s
+  #     timeout: 3s
+  #     retries: 10
+  #   command: ["postgres", "-c", "log_statement=all"]
+  #   environment:
+  #     - POSTGRES_USER=${POSTGRES_USER:-postgres}
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+  #     - POSTGRES_DB=${POSTGRES_DB:-postgres}
+  #     - TZ=UTC
+  #     - PGTZ=UTC
+  #   ports:
+  #     - "${HOST_IP:-127.0.0.1}:${TRACING_POSTGRES_HOST_PORT:-55433}:5432"
+  #   volumes:
+  #     - langfuse_postgres_tracing_data:/var/lib/postgresql/data
+  #   networks:
+  #     - default
 
   langfuse-web:
     image: langfuse-web:local
@@ -153,10 +153,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      postgres-tracing:
+      yb-clickhouse-server:
         condition: service_healthy
-      postgres-tracing-schema-init:
-        condition: service_completed_successfully
+      # postgres-tracing:
+      #   condition: service_healthy
+      # postgres-tracing-schema-init:
+      #   condition: service_completed_successfully
     ports:
       - "${WEB_HOST_PORT:-3000}:3000"
     environment:
@@ -164,7 +166,10 @@ services:
       DATABASE_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
       DIRECT_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
       # Tracing DB (traces/observations/scores repositories)
-      TRACING_DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
+      # Container -> host DB on macOS/Windows:
+      # jdbc:postgresql://host.docker.internal:5433/yugabyte?user=yugabyte&password=yugabyte
+      # TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@host.docker.internal:5433/langfuse"
+      TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse"
 
       # ClickHouse (kept for env compatibility; tracing repositories use Postgres)
       CLICKHOUSE_MIGRATION_URL: "clickhouse://${CLICKHOUSE_CONTAINER_NAME:-langfuse-clickhouse}:9000"
@@ -249,10 +254,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      postgres-tracing:
-        condition: service_healthy
-      postgres-tracing-schema-init:
-        condition: service_completed_successfully
+      # postgres-tracing:
+      #   condition: service_healthy
+      # postgres-tracing-schema-init:
+      #   condition: service_completed_successfully
       redis:
         condition: service_started
       minio:
@@ -265,7 +270,9 @@ services:
       # Metadata DB
       DATABASE_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
       # Tracing DB (traces/observations/scores repositories)
-      TRACING_DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
+      # TRACING_DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
+      # TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@host.docker.internal:5433/langfuse"
+      TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse"
 
       # ClickHouse (kept for env compatibility; tracing repositories use Postgres)
       CLICKHOUSE_MIGRATION_URL: "clickhouse://${CLICKHOUSE_CONTAINER_NAME:-langfuse-clickhouse}:9000"
@@ -323,31 +330,174 @@ services:
     networks:
       - default
 
-  postgres-tracing-schema-init:
-    image: docker.io/postgres:${POSTGRES_VERSION:-15}
-    container_name: ${POSTGRES_SCHEMA_INIT_CONTAINER_NAME:-langfuse-postgres-tracing-schema-init}
-    depends_on:
-      postgres-tracing:
-        condition: service_healthy
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-postgres}
-      - TRACING_POSTGRES_CONTAINER_NAME=${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}
-    command: >
-      sh -c "
-      until pg_isready -h $${TRACING_POSTGRES_CONTAINER_NAME} -U $${POSTGRES_USER}; do sleep 1; done &&
-      PGPASSWORD=$${POSTGRES_PASSWORD} psql
-      -h $${TRACING_POSTGRES_CONTAINER_NAME}
-      -U $${POSTGRES_USER}
-      -d $${POSTGRES_DB}
-      -f /schema/tracing_postgres_schema.sql
-      "
+  # postgres-tracing-schema-init:
+  #   image: docker.io/postgres:${POSTGRES_VERSION:-15}
+  #   container_name: ${POSTGRES_SCHEMA_INIT_CONTAINER_NAME:-langfuse-postgres-tracing-schema-init}
+  #   depends_on:
+  #     postgres-tracing:
+  #       condition: service_healthy
+  #   environment:
+  #     - POSTGRES_USER=${POSTGRES_USER:-postgres}
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+  #     - POSTGRES_DB=${POSTGRES_DB:-postgres}
+  #     - TRACING_POSTGRES_CONTAINER_NAME=${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}
+  #   command: >
+  #     sh -c "
+  #     until pg_isready -h $${TRACING_POSTGRES_CONTAINER_NAME} -U $${POSTGRES_USER}; do sleep 1; done &&
+  #     PGPASSWORD=$${POSTGRES_PASSWORD} psql
+  #     -h $${TRACING_POSTGRES_CONTAINER_NAME}
+  #     -U $${POSTGRES_USER}
+  #     -d $${POSTGRES_DB}
+  #     -f /schema/tracing_postgres_schema.sql
+  #     "
+  #   volumes:
+  #     - ./tracing_postgres_schema.sql:/schema/tracing_postgres_schema.sql:ro
+  #   restart: "no"
+  #   networks:
+  #     - default
+
+  yb-clickhouse-server:
+    container_name: yb-clickhouse-server
+    hostname: yb-clickhouse-server
+    image: yugabytedb/yugabyte:2025.2.1.0-b141
+    platform: linux/amd64
+    command:
+    - sh
+    - -c
+    - |
+      # Exit immediately if any command fails
+      set -e
+
+      # Start YugabyteDB in the background.
+      # --background=false keeps logs attached to the container
+      # --base_dir ensures DB data is stored in the mounted Docker volume
+      bin/yugabyted start --background=false --cloud_location=cloud.region.zone1 --base_dir=/var/lib/yugabyte/data &
+
+      # Capture the YugabyteDB process ID so we can wait on it later
+      yb_pid=$$!
+
+      # Marker file used to remember that initial schema import has already happened
+      # This prevents re-running the SQL import on every container restart
+      init_done_marker="/var/lib/yugabyte/data/langfuse_init_done"
+
+      # Wait until the Yugabyte YSQL service is ready to accept connections
+      # pg_isready repeatedly checks the DB until it responds
+      until /home/yugabyte/postgres/bin/pg_isready -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte; do
+        sleep 2
+      done
+
+      echo "YSQL is ready, checking langfuse database and roles..."
+
+      # Flag to determine if we need to import the schema/psql_clickhouse_data.sql
+      should_import=0
+
+      # ------------------------------------------------------------
+      # Check if the 'langfuse' database already exists
+      # ------------------------------------------------------------
+      langfuse_db_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='langfuse'" | tr -d '[:space:]')
+
+      # If database does not exist, create it and mark import required
+      if [ "$$langfuse_db_exists" != "1" ]; then
+        ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -c "CREATE DATABASE langfuse;"
+        should_import=1
+      fi
+
+      # ------------------------------------------------------------
+      # Ensure the required role 'ybvoyager' exists
+      # Some migrations/tools depend on this role
+      # ------------------------------------------------------------
+      ybvoyager_role_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -tAc \
+        "SELECT 1 FROM pg_roles WHERE rolname='ybvoyager'" | tr -d '[:space:]')
+
+      if [ "$$ybvoyager_role_exists" != "1" ]; then
+        ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -c "CREATE ROLE ybvoyager;"
+      fi
+
+      # ------------------------------------------------------------
+      # Check if a key table exists in the langfuse database
+      # 'traces_default' is used as a signal that the schema exists
+      # ------------------------------------------------------------
+      traces_default_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc \
+        "SELECT 1 FROM information_schema.tables \
+        WHERE table_schema='public' AND table_name='traces_default'" | tr -d '[:space:]')
+
+      # If table does not exist, we must run the SQL import
+      if [ "$$traces_default_exists" != "1" ]; then
+        should_import=1
+      fi
+
+      # ------------------------------------------------------------
+      # Import database schema/data if needed
+      # Conditions:
+      #   1. Marker file doesn't exist (first startup)
+      #   2. Schema check failed (table missing)
+      # ------------------------------------------------------------
+      if [ ! -f "$$init_done_marker" ] || [ "$$should_import" = "1" ]; then
+
+        echo "Importing SQL data into langfuse database..."
+
+        # Execute SQL initialization script
+        ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse \
+          -f /docker-entrypoint-initdb.d/psql_clickhouse_data.sql
+
+        # Verify the import succeeded by checking the table again
+        traces_default_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc \
+          "SELECT 1 FROM information_schema.tables \
+          WHERE table_schema='public' AND table_name='traces_default'" | tr -d '[:space:]')
+
+        if [ "$$traces_default_exists" != "1" ]; then
+          echo "ERROR: traces_default table was not created by SQL import."
+          exit 1
+        fi
+
+        # Create marker file so future restarts skip the import
+        touch "$$init_done_marker"
+
+        echo "SQL import completed."
+
+      else
+        # Schema already exists and marker file present
+        echo "Skipping SQL import: langfuse schema already present."
+      fi
+
+      # Keep container running by waiting on YugabyteDB process
+      wait "$$yb_pid"
+
+    restart: unless-stopped
+
+    cap_add:
+      - NET_ADMIN
+
+    ports:
+      - "54433:5433"
+
+    # Persistent storage for YugabyteDB data
     volumes:
-      - ./tracing_postgres_schema.sql:/schema/tracing_postgres_schema.sql:ro
-    restart: "no"
-    networks:
-      - default
+      - langfuse_clickhouse_yugabyte_data:/var/lib/yugabyte/data
+      - ./psql_clickhouse_data.sql:/docker-entrypoint-initdb.d/psql_clickhouse_data.sql:ro
+    
+    # ------------------------------------------------------------
+    # Healthcheck verifies:
+    # 1. Database accepts connections
+    # 2. Initialization marker exists
+    # 3. Required schema table exists
+    # ------------------------------------------------------------
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          /home/yugabyte/postgres/bin/pg_isready -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte &&
+          test -f /var/lib/yugabyte/data/langfuse_init_done &&
+          test "$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc
+          "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='traces_default'"
+          | tr -d '[:space:]')" = "1"
+
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 180s
+      
 
 networks:
   default:
@@ -355,6 +505,6 @@ networks:
     driver: bridge
 
 volumes:
-  langfuse_postgres_tracing_data:
-    name: ${TRACING_POSTGRES_VOLUME_NAME:-langfuse_postgres_tracing_data}
+  langfuse_clickhouse_yugabyte_data:
+    name: ${TRACING_POSTGRES_VOLUME_NAME:-langfuse_clickhouse_yugabyte_data}
     driver: local
