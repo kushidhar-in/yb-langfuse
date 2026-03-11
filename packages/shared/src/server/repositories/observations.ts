@@ -4,7 +4,7 @@ import {
 } from "./clickhouse";
 import { logger } from "../logger";
 import { InternalServerError, LangfuseNotFoundError } from "../../errors";
-import { tracingPrisma } from "../../db";
+import { tracingPrisma as prisma } from "../../db";
 import { ObservationRecordReadType } from "./definitions";
 import { FilterState } from "../../types";
 import {
@@ -38,8 +38,6 @@ import { recordDistribution } from "../instrumentation";
 import { DEFAULT_RENDERING_PROPS, RenderingProps } from "../utils/rendering";
 import { shouldSkipObservationsFinal } from "../queries/clickhouse-sql/query-options";
 import { Prisma } from "@prisma/client";
-
-const prisma = tracingPrisma;
 
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;

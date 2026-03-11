@@ -36,13 +36,25 @@ import { measureAndReturn } from "../clickhouse/measureAndReturn";
 import { DEFAULT_RENDERING_PROPS, RenderingProps } from "../utils/rendering";
 import { logger } from "../logger";
 import { traceException } from "../instrumentation";
-import { tracingPrisma } from "../../db";
+import { prisma as metadataPrisma, tracingPrisma as prisma } from "../../db";
 import { Prisma } from "@prisma/client";
-
-const prisma = tracingPrisma;
 
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;
+
+const serializeErrorForLogs = (error: unknown) => {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { message: String(error) };
+};
+
+const stringifyErrorForMessage = (error: unknown) =>
+  JSON.stringify(serializeErrorForLogs(error));
 
 const toClickhouseMetadataRecord = (value: unknown): Record<string, string> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -351,7 +363,7 @@ export const getTracesBySessionId = async (
 export const hasAnyTrace = async (projectId: string) => {
   // Check PostgreSQL flag first — once set, it's never reverted
   try {
-    const project = await prisma.project.findUnique({
+    const project = await metadataPrisma.project.findUnique({
       where: { id: projectId },
       select: { hasTraces: true },
     });
@@ -360,33 +372,40 @@ export const hasAnyTrace = async (projectId: string) => {
     }
   } catch (error) {
     traceException(error);
-    logger.error("Failed to read hasTraces flag from PostgreSQL", {
-      projectId,
-      error,
-    });
+    logger.error(
+      `Failed to read hasTraces flag from PostgreSQL; projectId=${projectId}; error=${stringifyErrorForMessage(error)}`,
+    );
   }
 
-  const result =
-    (
-      await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-        SELECT id FROM traces WHERE project_id = ${projectId} LIMIT 1
-      `)
-    ).length > 0;
+  let result = false;
+  try {
+    result =
+      (
+        await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT id FROM traces WHERE project_id = ${projectId} LIMIT 1
+        `)
+      ).length > 0;
+  } catch (error) {
+    traceException(error);
+    logger.error(
+      `Failed to read traces presence from tracing PostgreSQL; projectId=${projectId}; error=${stringifyErrorForMessage(error)}`,
+    );
+    throw error;
+  }
 
   // Persist positive result in PostgreSQL — once a project has traces, it stays true
   // Only update if not already set to avoid unnecessary writes
   if (result) {
     try {
-      await prisma.project.updateMany({
+      await metadataPrisma.project.updateMany({
         where: { id: projectId, hasTraces: false },
         data: { hasTraces: true },
       });
     } catch (error) {
       traceException(error);
-      logger.error("Failed to persist hasTraces flag to PostgreSQL", {
-        projectId,
-        error,
-      });
+      logger.error(
+        `Failed to persist hasTraces flag to PostgreSQL; projectId=${projectId}; error=${stringifyErrorForMessage(error)}`,
+      );
     }
   }
 

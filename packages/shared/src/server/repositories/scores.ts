@@ -40,13 +40,26 @@ import { parseMetadataCHRecordToDomain } from "../utils/metadata_conversion";
 import type { AnalyticsScoreEvent } from "../analytics-integrations/types";
 import { ClickHouseClientConfigOptions } from "@clickhouse/client";
 import { recordDistribution } from "../instrumentation";
-import { tracingPrisma } from "../../db";
+import { prisma as metadataPrisma, tracingPrisma as prisma } from "../../db";
 import { measureAndReturn } from "../clickhouse/measureAndReturn";
 import { scoresColumnsTableUiColumnDefinitions } from "../tableMappings/mapScoresColumnsTable";
 import { eventsTraceMetadata } from "../queries/clickhouse-sql/query-fragments";
 import { Prisma } from "@prisma/client";
+import { logger } from "../logger";
 
-const prisma = tracingPrisma;
+const serializeErrorForLogs = (error: unknown) => {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { message: String(error) };
+};
+
+const stringifyErrorForMessage = (error: unknown) =>
+  JSON.stringify(serializeErrorForLogs(error));
 
 const toClickhouseDateTimeString = (value: Date | null | undefined) =>
   value ? value.toISOString().replace("T", " ").replace("Z", "") : undefined;
@@ -694,109 +707,127 @@ export const getNumericScoresGroupedByName = async (
   projectId: string,
   timestampFilter?: FilterState,
 ) => {
-  const timeConditions = (timestampFilter ?? [])
-    .filter((f) => f.type === "datetime" && normalizeTimestampColumn(f.column))
-    .map((f) => {
-      if (f.operator === ">=") return Prisma.sql`s.timestamp >= ${f.value}`;
-      if (f.operator === ">") return Prisma.sql`s.timestamp > ${f.value}`;
-      if (f.operator === "<=") return Prisma.sql`s.timestamp <= ${f.value}`;
-      return Prisma.sql`s.timestamp < ${f.value}`;
-    });
-  return prisma.$queryRaw<Array<{ name: string }>>(Prisma.sql`
-    SELECT s.name as name
-    FROM scores s
-    WHERE s.project_id = ${projectId}
-      AND s.data_type::text IN ('NUMERIC','BOOLEAN')
-      ${timeConditions.length ? Prisma.sql`AND ${Prisma.join(timeConditions, " AND ")}` : Prisma.empty}
-    GROUP BY s.name
-    ORDER BY COUNT(*) DESC
-    LIMIT 1000
-  `);
+  try {
+    const timeConditions = (timestampFilter ?? [])
+      .filter(
+        (f) => f.type === "datetime" && normalizeTimestampColumn(f.column),
+      )
+      .map((f) => {
+        if (f.operator === ">=") return Prisma.sql`s.timestamp >= ${f.value}`;
+        if (f.operator === ">") return Prisma.sql`s.timestamp > ${f.value}`;
+        if (f.operator === "<=") return Prisma.sql`s.timestamp <= ${f.value}`;
+        return Prisma.sql`s.timestamp < ${f.value}`;
+      });
+    return prisma.$queryRaw<Array<{ name: string }>>(Prisma.sql`
+      SELECT s.name as name
+      FROM scores s
+      WHERE s.project_id = ${projectId}
+        AND s.data_type::text IN ('NUMERIC','BOOLEAN')
+        ${timeConditions.length ? Prisma.sql`AND ${Prisma.join(timeConditions, " AND ")}` : Prisma.empty}
+      GROUP BY s.name
+      ORDER BY COUNT(*) DESC
+      LIMIT 1000
+    `);
+  } catch (error) {
+    logger.error(
+      `getNumericScoresGroupedByName failed; projectId=${projectId}; timestampFilterCount=${timestampFilter?.length ?? 0}; error=${stringifyErrorForMessage(error)}`,
+    );
+    throw error;
+  }
 };
 
 export const getCategoricalScoresGroupedByName = async (
   projectId: string,
   timestampFilter?: FilterState,
 ) => {
-  const timeConditions = (timestampFilter ?? [])
-    .filter((f) => f.type === "datetime" && normalizeTimestampColumn(f.column))
-    .map((f) => {
-      if (f.operator === ">=") return Prisma.sql`s.timestamp >= ${f.value}`;
-      if (f.operator === ">") return Prisma.sql`s.timestamp > ${f.value}`;
-      if (f.operator === "<=") return Prisma.sql`s.timestamp <= ${f.value}`;
-      return Prisma.sql`s.timestamp < ${f.value}`;
-    });
+  try {
+    const timeConditions = (timestampFilter ?? [])
+      .filter(
+        (f) => f.type === "datetime" && normalizeTimestampColumn(f.column),
+      )
+      .map((f) => {
+        if (f.operator === ">=") return Prisma.sql`s.timestamp >= ${f.value}`;
+        if (f.operator === ">") return Prisma.sql`s.timestamp > ${f.value}`;
+        if (f.operator === "<=") return Prisma.sql`s.timestamp <= ${f.value}`;
+        return Prisma.sql`s.timestamp < ${f.value}`;
+      });
 
-  const rows = await prisma.$queryRaw<
-    {
-      label: string;
-      values: string[];
-    }[]
-  >(Prisma.sql`
-    SELECT
-      s.name AS label,
-      ARRAY_REMOVE(ARRAY_AGG(DISTINCT s.string_value), NULL) AS values
-    FROM scores s
-    WHERE s.project_id = ${projectId}
-      AND s.data_type::text = 'CATEGORICAL'
-      ${timeConditions.length ? Prisma.sql`AND ${Prisma.join(timeConditions, " AND ")}` : Prisma.empty}
-    GROUP BY s.name
-    ORDER BY COUNT(*) DESC
-    LIMIT 1000
-  `);
+    const rows = await prisma.$queryRaw<
+      {
+        label: string;
+        values: string[];
+      }[]
+    >(Prisma.sql`
+      SELECT
+        s.name AS label,
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT s.string_value), NULL) AS values
+      FROM scores s
+      WHERE s.project_id = ${projectId}
+        AND s.data_type::text = 'CATEGORICAL'
+        ${timeConditions.length ? Prisma.sql`AND ${Prisma.join(timeConditions, " AND ")}` : Prisma.empty}
+      GROUP BY s.name
+      ORDER BY COUNT(*) DESC
+      LIMIT 1000
+    `);
 
-  // Get score names from ClickHouse results to query score configs
-  const scoreNames = rows.map((row) => row.label);
+    // Get score names from ClickHouse results to query score configs
+    const scoreNames = rows.map((row) => row.label);
 
-  // Query score_configs table for categorical configurations
-  const scoreConfigs =
-    scoreNames.length > 0
-      ? await prisma.scoreConfig.findMany({
-          where: {
-            projectId: projectId,
-            name: {
-              in: scoreNames,
+    // Query score_configs table for categorical configurations
+    const scoreConfigs =
+      scoreNames.length > 0
+        ? await metadataPrisma.scoreConfig.findMany({
+            where: {
+              projectId: projectId,
+              name: {
+                in: scoreNames,
+              },
+              dataType: "CATEGORICAL",
+              isArchived: false,
             },
-            dataType: "CATEGORICAL",
-            isArchived: false,
-          },
-          select: {
-            name: true,
-            categories: true,
-          },
-        })
-      : [];
+            select: {
+              name: true,
+              categories: true,
+            },
+          })
+        : [];
 
-  // Create a map of score configs for easy lookup
-  const configMap = new Map(
-    scoreConfigs.map((config) => [config.name, config.categories]),
-  );
+    // Create a map of score configs for easy lookup
+    const configMap = new Map(
+      scoreConfigs.map((config) => [config.name, config.categories]),
+    );
 
-  // Enhance the results with all possible category values from score configs
-  return rows.map((row) => {
-    const configCategories = configMap.get(row.label);
+    // Enhance the results with all possible category values from score configs
+    return rows.map((row) => {
+      const configCategories = configMap.get(row.label);
 
-    if (configCategories && Array.isArray(configCategories)) {
-      // Extract all possible category labels from the score config
-      const allPossibleValues = (
-        configCategories as Array<{ label: string; value: number }>
-      ).map((category) => category.label);
+      if (configCategories && Array.isArray(configCategories)) {
+        // Extract all possible category labels from the score config
+        const allPossibleValues = (
+          configCategories as Array<{ label: string; value: number }>
+        ).map((category) => category.label);
 
-      // Merge actual values from ClickHouse with all possible values from config
-      // Use Set to ensure uniqueness
-      const mergedValues = Array.from(
-        new Set([...row.values, ...allPossibleValues]),
-      );
+        // Merge actual values from ClickHouse with all possible values from config
+        // Use Set to ensure uniqueness
+        const mergedValues = Array.from(
+          new Set([...row.values, ...allPossibleValues]),
+        );
 
-      return {
-        ...row,
-        values: mergedValues,
-      };
-    }
+        return {
+          ...row,
+          values: mergedValues,
+        };
+      }
 
-    // If no config found, return original values
-    return row;
-  });
+      // If no config found, return original values
+      return row;
+    });
+  } catch (error) {
+    logger.error(
+      `getCategoricalScoresGroupedByName failed; projectId=${projectId}; timestampFilterCount=${timestampFilter?.length ?? 0}; error=${stringifyErrorForMessage(error)}`,
+    );
+    throw error;
+  }
 };
 
 export const getScoresUiCount = async (props: {

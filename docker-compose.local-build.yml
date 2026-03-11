@@ -147,6 +147,16 @@ services:
     depends_on:
       langfuse-worker:
         condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      postgres-tracing:
+        condition: service_healthy
+      postgres-tracing-schema-init:
+        condition: service_completed_successfully
     ports:
       - "${WEB_HOST_PORT:-3000}:3000"
     environment:
@@ -243,6 +253,12 @@ services:
         condition: service_healthy
       postgres-tracing-schema-init:
         condition: service_completed_successfully
+      redis:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      clickhouse:
+        condition: service_started
     ports:
       - "${WORKER_HOST_PORT:-3030}:3030"
     environment:

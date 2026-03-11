@@ -2,10 +2,8 @@ import { ScoreDataTypeType, ScoreDomain, ScoreSourceType } from "../../domain";
 import { PreferredClickhouseService } from "../clickhouse/client";
 import { ScoreRecordReadType } from "./definitions";
 import { convertClickhouseScoreToDomain } from "./scores_converters";
-import { tracingPrisma } from "../../db";
+import { tracingPrisma as prisma } from "../../db";
 import { Prisma } from "@prisma/client";
-
-const prisma = tracingPrisma;
 
 type PgScoreRow = {
   id: string;
