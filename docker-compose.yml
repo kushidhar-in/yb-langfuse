@@ -14,14 +14,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      clickhouse:
+      yb-clickhouse-server:
         condition: service_healthy
     ports:
       - 127.0.0.1:3030:3030
     environment: &langfuse-worker-env
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
-      LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: ${LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED:-false}
+      LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED: ${LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED:-true}
+      LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED: ${LANGFUSE_AUTO_CLICKHOUSE_MIGRATION_DISABLED:-true}
       DATABASE_URL: ${DATABASE_URL:-postgresql://yugabyte:yugabyte@yb-server:5433/langfuse}
+      TRACING_DATABASE_URL: ${TRACING_DATABASE_URL:-postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse}
       SALT: ${SALT:-mysalt} # CHANGEME
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000} # CHANGEME: generate via `openssl rand -hex 32`
       TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-true}
@@ -86,26 +88,147 @@ services:
       LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
 
-  clickhouse:
-    image: docker.io/clickhouse/clickhouse-server
-    restart: always
-    user: "101:101"
-    environment:
-      CLICKHOUSE_DB: default
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse} # CHANGEME
-    volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
-      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+  yb-clickhouse-server:
+    container_name: yb-clickhouse-server
+    hostname: yb-clickhouse-server
+    image: yugabytedb/yugabyte:2025.2.1.0-b141
+    platform: linux/amd64
+    command:
+    - sh
+    - -c
+    - |
+      # Exit immediately if any command fails
+      set -e
+
+      # Start YugabyteDB in the background.
+      # --background=false keeps logs attached to the container
+      # --base_dir ensures DB data is stored in the mounted Docker volume
+      bin/yugabyted start --background=false --cloud_location=cloud.region.zone1 --base_dir=/var/lib/yugabyte/data &
+
+      # Capture the YugabyteDB process ID so we can wait on it later
+      yb_pid=$$!
+
+      # Marker file used to remember that initial schema import has already happened
+      # This prevents re-running the SQL import on every container restart
+      init_done_marker="/var/lib/yugabyte/data/langfuse_init_done"
+
+      # Wait until the Yugabyte YSQL service is ready to accept connections
+      # pg_isready repeatedly checks the DB until it responds
+      until /home/yugabyte/postgres/bin/pg_isready -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte; do
+        sleep 2
+      done
+
+      echo "YSQL is ready, checking langfuse database and roles..."
+
+      # Flag to determine if we need to import the schema/psql_clickhouse_data.sql
+      should_import=0
+
+      # ------------------------------------------------------------
+      # Check if the 'langfuse' database already exists
+      # ------------------------------------------------------------
+      langfuse_db_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='langfuse'" | tr -d '[:space:]')
+
+      # If database does not exist, create it and mark import required
+      if [ "$$langfuse_db_exists" != "1" ]; then
+        ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -c "CREATE DATABASE langfuse;"
+        should_import=1
+      fi
+
+      # ------------------------------------------------------------
+      # Ensure the required role 'ybvoyager' exists
+      # Some migrations/tools depend on this role
+      # ------------------------------------------------------------
+      ybvoyager_role_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -tAc \
+        "SELECT 1 FROM pg_roles WHERE rolname='ybvoyager'" | tr -d '[:space:]')
+
+      if [ "$$ybvoyager_role_exists" != "1" ]; then
+        ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte -c "CREATE ROLE ybvoyager;"
+      fi
+
+      # ------------------------------------------------------------
+      # Check if a key table exists in the langfuse database
+      # 'traces_default' is used as a signal that the schema exists
+      # ------------------------------------------------------------
+      traces_default_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc \
+        "SELECT 1 FROM information_schema.tables \
+        WHERE table_schema='public' AND table_name='traces_default'" | tr -d '[:space:]')
+
+      # If table does not exist, we must run the SQL import
+      if [ "$$traces_default_exists" != "1" ]; then
+        should_import=1
+      fi
+
+      # ------------------------------------------------------------
+      # Import database schema/data if needed
+      # Conditions:
+      #   1. Marker file doesn't exist (first startup)
+      #   2. Schema check failed (table missing)
+      # ------------------------------------------------------------
+      if [ ! -f "$$init_done_marker" ] || [ "$$should_import" = "1" ]; then
+
+        echo "Importing SQL data into langfuse database..."
+
+        # Execute SQL initialization script
+        ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse \
+          -f /docker-entrypoint-initdb.d/psql_clickhouse_data.sql
+
+        # Verify the import succeeded by checking the table again
+        traces_default_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc \
+          "SELECT 1 FROM information_schema.tables \
+          WHERE table_schema='public' AND table_name='traces_default'" | tr -d '[:space:]')
+
+        if [ "$$traces_default_exists" != "1" ]; then
+          echo "ERROR: traces_default table was not created by SQL import."
+          exit 1
+        fi
+
+        # Create marker file so future restarts skip the import
+        touch "$$init_done_marker"
+
+        echo "SQL import completed."
+
+      else
+        # Schema already exists and marker file present
+        echo "Skipping SQL import: langfuse schema already present."
+      fi
+
+      # Keep container running by waiting on YugabyteDB process
+      wait "$$yb_pid"
+
+    restart: unless-stopped
+
+    cap_add:
+      - NET_ADMIN
+
     ports:
-      - 127.0.0.1:8123:8123
-      - 127.0.0.1:9095:9000
+      - "54433:5433"
+
+    # Persistent storage for YugabyteDB data
+    volumes:
+      - langfuse_clickhouse_yugabyte_data:/var/lib/yugabyte/data
+      - ./psql_clickhouse_data.sql:/docker-entrypoint-initdb.d/psql_clickhouse_data.sql:ro
+    
+    # ------------------------------------------------------------
+    # Healthcheck verifies:
+    # 1. Database accepts connections
+    # 2. Initialization marker exists
+    # 3. Required schema table exists
+    # ------------------------------------------------------------
     healthcheck:
-      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 1s
+      test:
+        - CMD-SHELL
+        - >
+          /home/yugabyte/postgres/bin/pg_isready -h yb-clickhouse-server -p 5433 -U yugabyte -d yugabyte &&
+          test -f /var/lib/yugabyte/data/langfuse_init_done &&
+          test "$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc
+          "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='traces_default'"
+          | tr -d '[:space:]')" = "1"
+
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 180s
 
   minio:
     image: cgr.dev/chainguard/minio
@@ -290,7 +413,7 @@ services:
 volumes:
   langfuse_yugabyte_data:
     driver: local
-  langfuse_clickhouse_data:
+  langfuse_clickhouse_yugabyte_data:
     driver: local
   langfuse_clickhouse_logs:
     driver: local
