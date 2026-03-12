@@ -236,7 +236,7 @@ services:
 
       echo "YSQL is ready, checking langfuse database and roles..."
 
-      # Flag to determine if we need to import the schema/psql_clickhouse_data.sql
+      # Flag to determine if we need to import the schema/yb_clickhouse_data.sql
       should_import=0
 
       # ------------------------------------------------------------
@@ -287,7 +287,7 @@ services:
 
         # Execute SQL initialization script
         ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse \
-          -f /docker-entrypoint-initdb.d/psql_clickhouse_data.sql
+          -f /docker-entrypoint-initdb.d/yb_clickhouse_data.sql
 
         # Verify the import succeeded by checking the table again
         traces_default_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc \
@@ -323,7 +323,7 @@ services:
     # Persistent storage for YugabyteDB data
     volumes:
       - langfuse_clickhouse_yugabyte_data:/var/lib/yugabyte/data
-      - ./psql_clickhouse_data.sql:/docker-entrypoint-initdb.d/psql_clickhouse_data.sql:ro
+      - ./yb_clickhouse_data.sql:/docker-entrypoint-initdb.d/yb_clickhouse_data.sql:ro
     
     # ------------------------------------------------------------
     # Healthcheck verifies:
@@ -416,7 +416,7 @@ services:
 
       echo "YSQL is ready, checking langfuse database and roles..."
 
-      # Flag to determine if we need to import the schema/data.sql
+      # Flag to determine if we need to import the schema/yb_postgres_data.sql
       should_import=0
 
       # ------------------------------------------------------------
@@ -467,7 +467,7 @@ services:
 
         # Execute SQL initialization script
         ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse \
-          -f /docker-entrypoint-initdb.d/data.sql
+          -f /docker-entrypoint-initdb.d/yb_postgres_data.sql
 
         # Verify the import succeeded by checking the table again
         verification_tokens_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -tAc \
@@ -503,7 +503,7 @@ services:
     # Persistent storage for YugabyteDB data
     volumes:
       - langfuse_yugabyte_data:/var/lib/yugabyte/data
-      - ./data.sql:/docker-entrypoint-initdb.d/data.sql:ro
+      - ./yb_postgres_data.sql:/docker-entrypoint-initdb.d/yb_postgres_data.sql:ro
     
     # ------------------------------------------------------------
     # Healthcheck verifies:
