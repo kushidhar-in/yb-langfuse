@@ -1,9 +1,139 @@
-# Make sure to update the credential placeholders with your own secrets.
-# We mark them with # CHANGEME in the file below.
-# In addition, we recommend to restrict inbound traffic on the host to langfuse-web (port 3000) and minio (port 9090) only.
-# All other components are bound to localhost (127.0.0.1) to only accept connections from the local machine.
-# External connections from other machines will not be able to reach these services directly.
+# Local production build for comparing memory usage vs `pnpm dev`.
+#
+# Prerequisites: run `pnpm run infra:dev:up` first (postgres, redis, minio).
+# Use both compose files: -f docker-compose.dev.yml -f docker-compose.local-build.yml
+# Optional shortcut:
+#   DC="docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml"
+#
+# === BUILD ===
+# Build all (incremental, uses cache):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build
+#
+# Build all (BuildKit enabled; uses default layer cache):
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build
+#
+# Build + up (incremental cache, web + worker) [recommended]:
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build langfuse-web langfuse-worker
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d langfuse-web langfuse-worker
+#
+# Build + up (incremental cache, web only):
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build langfuse-web
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d langfuse-web
+#
+# Build + up (incremental cache, worker only):
+#   DOCKER_BUILDKIT=1 docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build langfuse-worker
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d langfuse-worker
+#
+# Build all (full rebuild, no cache):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build --no-cache
+#
+# Build web only (incremental):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build langfuse-web
+#
+# Build web only (no cache):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build --no-cache langfuse-web
+#
+# Build worker only (incremental):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build langfuse-worker
+#
+# Build worker only (no cache):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build --no-cache langfuse-worker
+#
+# === START ===
+# Start all services (build if needed):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d --build
+#
+# Start all (no build, fails if images missing):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d
+#
+# Build then start all:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build && docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d
+#
+# Build web then start web:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml build langfuse-web && docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d langfuse-web
+#
+# Start web + worker only:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up -d langfuse-web langfuse-worker
+#
+# Start foreground (live logs):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml up --build
+#
+# Apply tracing Postgres schema manually (one-shot helper):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml run --rm postgres-tracing-schema-init
+#
+# === STOP / DOWN ===
+# Stop all containers (keep them):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml stop
+#
+# Stop individual services:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml stop langfuse-web
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml stop langfuse-worker
+#
+# Remove containers/network (keep volumes):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml down
+#
+# Remove containers/network/volumes (clean reset):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml down -v --remove-orphans
+#
+# === RESTART ===
+# Restart all:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml restart
+#
+# Restart one service:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml restart langfuse-web
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml restart langfuse-worker
+#
+# === LOGS / STATUS ===
+# Show status:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml ps
+#
+# Stream logs:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml logs -f
+#
+# Stream only app logs:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.local-build.yml logs -f langfuse-web langfuse-worker
+#
+# === VALIDATION ===
+# UI should be reachable:
+#   curl -I http://localhost:3000
+#
+# Worker should be reachable:
+#   curl -I http://localhost:3030
+#
+# Check tracing row counts in Postgres:
+#   docker exec -it ${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing} psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres} -c "select count(*) from traces;"
+#   docker exec -it ${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing} psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres} -c "select count(*) from observations;"
+#   docker exec -it ${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing} psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres} -c "select count(*) from scores;"
+#
+# Monitor memory:
+#   docker stats
+#
+# Caching: Docker's built-in layer cache handles incremental builds automatically.
+# Unchanged layers (e.g. pnpm install, base stages) are reused. Use --no-cache for full rebuild.
+
 services:
+  # postgres-tracing:
+  #   image: docker.io/postgres:${POSTGRES_VERSION:-15}
+  #   container_name: ${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 3s
+  #     timeout: 3s
+  #     retries: 10
+  #   command: ["postgres", "-c", "log_statement=all"]
+  #   environment:
+  #     - POSTGRES_USER=${POSTGRES_USER:-postgres}
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+  #     - POSTGRES_DB=${POSTGRES_DB:-postgres}
+  #     - TZ=UTC
+  #     - PGTZ=UTC
+  #   ports:
+  #     - "${HOST_IP:-127.0.0.1}:${TRACING_POSTGRES_HOST_PORT:-55433}:5432"
+  #   volumes:
+  #     - langfuse_postgres_tracing_data:/var/lib/postgresql/data
+  #   networks:
+  #     - default
 
   langfuse-web:
     image: langfuse-web:local
@@ -21,7 +151,7 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
-      yb-server:
+      postgres:
         condition: service_healthy
       yb-clickhouse-server:
         condition: service_healthy
@@ -33,14 +163,13 @@ services:
       - "${WEB_HOST_PORT:-3000}:3000"
     environment:
       # Metadata DB (Prisma migrations + metadata tables)
-      DATABASE_URL: ${DATABASE_URL:-postgresql://yugabyte:yugabyte@yb-server:5433/langfuse}
-      TRACING_DATABASE_URL: ${TRACING_DATABASE_URL:-postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse}
-      # DIRECT_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
+      DATABASE_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
+      DIRECT_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
       # Tracing DB (traces/observations/scores repositories)
       # Container -> host DB on macOS/Windows:
       # jdbc:postgresql://host.docker.internal:5433/yugabyte?user=yugabyte&password=yugabyte
       # TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@host.docker.internal:5433/langfuse"
-      # TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse"
+      TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse"
 
       # ClickHouse (kept for env compatibility; tracing repositories use Postgres)
       CLICKHOUSE_MIGRATION_URL: "clickhouse://${CLICKHOUSE_CONTAINER_NAME:-langfuse-clickhouse}:9000"
@@ -50,7 +179,7 @@ services:
       CLICKHOUSE_CLUSTER_ENABLED: "false"
 
       # Redis
-      REDIS_HOST: "redis"
+      REDIS_HOST: "${REDIS_CONTAINER_NAME:-langfuse-redis}"
       REDIS_PORT: "6379"
       REDIS_AUTH: "${REDIS_AUTH:-myredissecret}"
 
@@ -59,7 +188,7 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_REGION: "${LANGFUSE_S3_EVENT_UPLOAD_REGION:-us-east-1}"
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-minio}"
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}"
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://${MINIO_CONTAINER_NAME:-langfuse-minio}:9000"
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}"
 
@@ -67,7 +196,7 @@ services:
       LANGFUSE_S3_MEDIA_UPLOAD_REGION: "${LANGFUSE_S3_MEDIA_UPLOAD_REGION:-us-east-1}"
       LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: "${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-minio}"
       LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}"
-      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://${MINIO_CONTAINER_NAME:-langfuse-minio}:9000"
       LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}"
 
@@ -75,7 +204,7 @@ services:
       LANGFUSE_S3_BATCH_EXPORT_BUCKET: "${LANGFUSE_S3_BATCH_EXPORT_BUCKET:-langfuse}"
       LANGFUSE_S3_BATCH_EXPORT_PREFIX: "${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-exports/}"
       LANGFUSE_S3_BATCH_EXPORT_REGION: "${LANGFUSE_S3_BATCH_EXPORT_REGION:-us-east-1}"
-      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: "http://${MINIO_CONTAINER_NAME:-langfuse-minio}:9000"
       LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: "http://localhost:${MINIO_API_PORT:-19090}"
       LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: "${LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID:-minio}"
       LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: "${LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY:-miniosecret}"
@@ -123,7 +252,7 @@ services:
     container_name: ${WORKER_CONTAINER_NAME:-langfuse-worker}
     restart: unless-stopped
     depends_on:
-      yb-server:
+      postgres:
         condition: service_healthy
       # postgres-tracing:
       #   condition: service_healthy
@@ -133,19 +262,17 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
-      yb-clickhouse-server:
+      clickhouse:
         condition: service_started
     ports:
       - "${WORKER_HOST_PORT:-3030}:3030"
     environment:
       # Metadata DB
-      DATABASE_URL: ${DATABASE_URL:-postgresql://yugabyte:yugabyte@yb-server:5433/langfuse}
-      TRACING_DATABASE_URL: ${TRACING_DATABASE_URL:-postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse}
-      # DATABASE_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
+      DATABASE_URL: "postgresql://postgres:postgres@${POSTGRES_CONTAINER_NAME:-langfuse-postgres}:5432/postgres"
       # Tracing DB (traces/observations/scores repositories)
       # TRACING_DATABASE_URL: "postgresql://postgres:postgres@${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}:5432/postgres"
       # TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@host.docker.internal:5433/langfuse"
-      # TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse"
+      TRACING_DATABASE_URL: "postgresql://yugabyte:yugabyte@yb-clickhouse-server:5433/langfuse"
 
       # ClickHouse (kept for env compatibility; tracing repositories use Postgres)
       CLICKHOUSE_MIGRATION_URL: "clickhouse://${CLICKHOUSE_CONTAINER_NAME:-langfuse-clickhouse}:9000"
@@ -155,7 +282,7 @@ services:
       CLICKHOUSE_CLUSTER_ENABLED: "false"
 
       # Redis
-      REDIS_HOST: "redis"
+      REDIS_HOST: "${REDIS_CONTAINER_NAME:-langfuse-redis}"
       REDIS_PORT: "6379"
       REDIS_AUTH: "${REDIS_AUTH:-myredissecret}"
 
@@ -164,7 +291,7 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_REGION: "${LANGFUSE_S3_EVENT_UPLOAD_REGION:-us-east-1}"
       LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-minio}"
       LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}"
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://${MINIO_CONTAINER_NAME:-langfuse-minio}:9000"
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}"
 
@@ -172,7 +299,7 @@ services:
       LANGFUSE_S3_MEDIA_UPLOAD_REGION: "${LANGFUSE_S3_MEDIA_UPLOAD_REGION:-us-east-1}"
       LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: "${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-minio}"
       LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: "${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}"
-      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://${MINIO_CONTAINER_NAME:-langfuse-minio}:9000"
       LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}"
 
@@ -180,7 +307,7 @@ services:
       LANGFUSE_S3_BATCH_EXPORT_BUCKET: "${LANGFUSE_S3_BATCH_EXPORT_BUCKET:-langfuse}"
       LANGFUSE_S3_BATCH_EXPORT_PREFIX: "${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-exports/}"
       LANGFUSE_S3_BATCH_EXPORT_REGION: "${LANGFUSE_S3_BATCH_EXPORT_REGION:-us-east-1}"
-      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: "http://minio:9000"
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: "http://${MINIO_CONTAINER_NAME:-langfuse-minio}:9000"
       LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: "${LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID:-minio}"
       LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: "${LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY:-miniosecret}"
       LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
@@ -203,6 +330,31 @@ services:
     networks:
       - default
 
+  # postgres-tracing-schema-init:
+  #   image: docker.io/postgres:${POSTGRES_VERSION:-15}
+  #   container_name: ${POSTGRES_SCHEMA_INIT_CONTAINER_NAME:-langfuse-postgres-tracing-schema-init}
+  #   depends_on:
+  #     postgres-tracing:
+  #       condition: service_healthy
+  #   environment:
+  #     - POSTGRES_USER=${POSTGRES_USER:-postgres}
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+  #     - POSTGRES_DB=${POSTGRES_DB:-postgres}
+  #     - TRACING_POSTGRES_CONTAINER_NAME=${TRACING_POSTGRES_CONTAINER_NAME:-langfuse-postgres-tracing}
+  #   command: >
+  #     sh -c "
+  #     until pg_isready -h $${TRACING_POSTGRES_CONTAINER_NAME} -U $${POSTGRES_USER}; do sleep 1; done &&
+  #     PGPASSWORD=$${POSTGRES_PASSWORD} psql
+  #     -h $${TRACING_POSTGRES_CONTAINER_NAME}
+  #     -U $${POSTGRES_USER}
+  #     -d $${POSTGRES_DB}
+  #     -f /schema/tracing_postgres_schema.sql
+  #     "
+  #   volumes:
+  #     - ./tracing_postgres_schema.sql:/schema/tracing_postgres_schema.sql:ro
+  #   restart: "no"
+  #   networks:
+  #     - default
 
   yb-clickhouse-server:
     container_name: yb-clickhouse-server
@@ -236,7 +388,7 @@ services:
 
       echo "YSQL is ready, checking langfuse database and roles..."
 
-      # Flag to determine if we need to import the schema/yb_clickhouse_data.sql
+      # Flag to determine if we need to import the schema/psql_clickhouse_data.sql
       should_import=0
 
       # ------------------------------------------------------------
@@ -287,7 +439,7 @@ services:
 
         # Execute SQL initialization script
         ./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse \
-          -f /docker-entrypoint-initdb.d/yb_clickhouse_data.sql
+          -f /docker-entrypoint-initdb.d/psql_clickhouse_data.sql
 
         # Verify the import succeeded by checking the table again
         traces_default_exists=$$(./bin/ysqlsh -h yb-clickhouse-server -p 5433 -U yugabyte -d langfuse -tAc \
@@ -323,7 +475,7 @@ services:
     # Persistent storage for YugabyteDB data
     volumes:
       - langfuse_clickhouse_yugabyte_data:/var/lib/yugabyte/data
-      - ./yb_clickhouse_data.sql:/docker-entrypoint-initdb.d/yb_clickhouse_data.sql:ro
+      - ./psql_clickhouse_data.sql:/docker-entrypoint-initdb.d/psql_clickhouse_data.sql:ro
     
     # ------------------------------------------------------------
     # Healthcheck verifies:
@@ -345,195 +497,14 @@ services:
       timeout: 10s
       retries: 15
       start_period: 180s
-
-  minio:
-    image: cgr.dev/chainguard/minio
-    restart: always
-    entrypoint: sh
-    # create the 'langfuse' bucket before starting the service
-    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret}
-    ports:
-      - 9090:9000
-      - 127.0.0.1:9091:9001
-    volumes:
-      - langfuse_minio_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 1s
-      timeout: 5s
-      retries: 5
-      start_period: 1s
-
-  redis:
-    image: docker.io/redis:7
-    restart: always
-    # CHANGEME: row below to secure redis password
-    command: >
-      --requirepass ${REDIS_AUTH:-myredissecret}
-      --maxmemory-policy noeviction
-    ports:
-      - 127.0.0.1:6379:6379
-    volumes:
-      - langfuse_redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 3s
-      timeout: 10s
-      retries: 10
-
-  yb-server:
-    container_name: yb-server
-    hostname: yb-server
-    image: yugabytedb/yugabyte:2025.2.1.0-b141
-    platform: linux/amd64
-    command:
-    - sh
-    - -c
-    - |
-      # Exit immediately if any command fails
-      set -e
-
-      # Start YugabyteDB in the background.
-      # --background=false keeps logs attached to the container
-      # --base_dir ensures DB data is stored in the mounted Docker volume
-      bin/yugabyted start --background=false --cloud_location=cloud.region.zone1 --base_dir=/var/lib/yugabyte/data &
-
-      # Capture the YugabyteDB process ID so we can wait on it later
-      yb_pid=$$!
-
-      # Marker file used to remember that initial schema import has already happened
-      # This prevents re-running the SQL import on every container restart
-      init_done_marker="/var/lib/yugabyte/data/langfuse_init_done"
-
-      # Wait until the Yugabyte YSQL service is ready to accept connections
-      # pg_isready repeatedly checks the DB until it responds
-      until /home/yugabyte/postgres/bin/pg_isready -h yb-server -p 5433 -U yugabyte -d yugabyte; do
-        sleep 2
-      done
-
-      echo "YSQL is ready, checking langfuse database and roles..."
-
-      # Flag to determine if we need to import the schema/yb_postgres_data.sql
-      should_import=0
-
-      # ------------------------------------------------------------
-      # Check if the 'langfuse' database already exists
-      # ------------------------------------------------------------
-      langfuse_db_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -tAc \
-        "SELECT 1 FROM pg_database WHERE datname='langfuse'" | tr -d '[:space:]')
-
-      # If database does not exist, create it and mark import required
-      if [ "$$langfuse_db_exists" != "1" ]; then
-        ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -c "CREATE DATABASE langfuse;"
-        should_import=1
-      fi
-
-      # ------------------------------------------------------------
-      # Ensure the required role 'ybvoyager' exists
-      # Some migrations/tools depend on this role
-      # ------------------------------------------------------------
-      ybvoyager_role_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -tAc \
-        "SELECT 1 FROM pg_roles WHERE rolname='ybvoyager'" | tr -d '[:space:]')
-
-      if [ "$$ybvoyager_role_exists" != "1" ]; then
-        ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d yugabyte -c "CREATE ROLE ybvoyager;"
-      fi
-
-      # ------------------------------------------------------------
-      # Check if a key table exists in the langfuse database
-      # 'verification_tokens' is used as a signal that the schema exists
-      # ------------------------------------------------------------
-      verification_tokens_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -tAc \
-        "SELECT 1 FROM information_schema.tables \
-        WHERE table_schema='public' AND table_name='verification_tokens'" | tr -d '[:space:]')
-
-      # If table does not exist, we must run the SQL import
-      if [ "$$verification_tokens_exists" != "1" ]; then
-        should_import=1
-      fi
-
-      # ------------------------------------------------------------
-      # Import database schema/data if needed
-      # Conditions:
-      #   1. Marker file doesn't exist (first startup)
-      #   2. Schema check failed (table missing)
-      # ------------------------------------------------------------
-      if [ ! -f "$$init_done_marker" ] || [ "$$should_import" = "1" ]; then
-
-        echo "Importing SQL data into langfuse database..."
-
-        # Execute SQL initialization script
-        ./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse \
-          -f /docker-entrypoint-initdb.d/yb_postgres_data.sql
-
-        # Verify the import succeeded by checking the table again
-        verification_tokens_exists=$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -tAc \
-          "SELECT 1 FROM information_schema.tables \
-          WHERE table_schema='public' AND table_name='verification_tokens'" | tr -d '[:space:]')
-
-        if [ "$$verification_tokens_exists" != "1" ]; then
-          echo "ERROR: verification_tokens table was not created by SQL import."
-          exit 1
-        fi
-
-        # Create marker file so future restarts skip the import
-        touch "$$init_done_marker"
-
-        echo "SQL import completed."
-
-      else
-        # Schema already exists and marker file present
-        echo "Skipping SQL import: langfuse schema already present."
-      fi
-
-      # Keep container running by waiting on YugabyteDB process
-      wait "$$yb_pid"
-
-    restart: unless-stopped
-
-    cap_add:
-      - NET_ADMIN
-
-    ports:
-      - "5433:5433"
-
-    # Persistent storage for YugabyteDB data
-    volumes:
-      - langfuse_yugabyte_data:/var/lib/yugabyte/data
-      - ./yb_postgres_data.sql:/docker-entrypoint-initdb.d/yb_postgres_data.sql:ro
-    
-    # ------------------------------------------------------------
-    # Healthcheck verifies:
-    # 1. Database accepts connections
-    # 2. Initialization marker exists
-    # 3. Required schema table exists
-    # ------------------------------------------------------------
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >
-          /home/yugabyte/postgres/bin/pg_isready -h yb-server -p 5433 -U yugabyte -d yugabyte &&
-          test -f /var/lib/yugabyte/data/langfuse_init_done &&
-          test "$$(./bin/ysqlsh -h yb-server -p 5433 -U yugabyte -d langfuse -tAc
-          "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='verification_tokens'"
-          | tr -d '[:space:]')" = "1"
-
-      interval: 10s
-      timeout: 10s
-      retries: 15
-      start_period: 180s
       
+
+networks:
+  default:
+    name: ${DOCKER_NETWORK_NAME:-langfuse-network}
+    driver: bridge
+
 volumes:
-  langfuse_yugabyte_data:
-    driver: local
   langfuse_clickhouse_yugabyte_data:
-    driver: local
-  langfuse_clickhouse_logs:
-    driver: local
-  langfuse_minio_data:
-    driver: local
-  langfuse_redis_data:
+    name: ${TRACING_POSTGRES_VOLUME_NAME:-langfuse_clickhouse_yugabyte_data}
     driver: local

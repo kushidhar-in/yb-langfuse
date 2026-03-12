@@ -1,6 +1,7 @@
 import { useRouter } from "next/router";
 import { useMemo, useEffect, useRef } from "react";
 import Page from "@/src/components/layouts/page";
+import { SCORES_PAGE_ENABLED } from "@/src/features/scores/scores-page-config";
 import {
   getScoresTabs,
   SCORES_TABS,
@@ -38,6 +39,16 @@ import { ScoreAnalyticsDashboard } from "@/src/features/score-analytics/componen
 export default function ScoresAnalyticsV2Page() {
   const router = useRouter();
   const projectId = router.query.projectId as string;
+
+  useEffect(() => {
+    if (!SCORES_PAGE_ENABLED && projectId) {
+      router.replace(`/project/${projectId}/traces`);
+    }
+  }, [projectId, router]);
+
+  if (!SCORES_PAGE_ENABLED) {
+    return null;
+  }
 
   const urlStateHook = useAnalyticsUrlState();
   const { state: urlState, setScore2 } = urlStateHook;
