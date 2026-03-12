@@ -305,15 +305,15 @@ services:
 
         db_exists="$$($$YSQL -d yugabyte -tAc "SELECT 1 FROM pg_database WHERE datname='\''langfuse'\''" | tr -d "[:space:]")"
         if [ "$$db_exists" != "1" ]; then
-          # First-time setup: create metadata DB and load data.sql.
+          # First-time setup: create metadata DB and load yb_postgres_data.sql.
           $$YSQL -d yugabyte -c "CREATE DATABASE langfuse"
-          $$YSQL -d langfuse -v ON_ERROR_STOP=1 -f /schema/data.sql
+          $$YSQL -d langfuse -v ON_ERROR_STOP=1 -f /schema/yb_postgres_data.sql
         else
-          echo "Database langfuse already exists; skipping data.sql import."
+          echo "Database langfuse already exists; skipping yb_postgres_data.sql import."
         fi
       '
     volumes:
-      - ./data.sql:/schema/data.sql:ro
+      - ./yb_postgres_data.sql:/schema/yb_postgres_data.sql:ro
     restart: "no"
 
   minio:
